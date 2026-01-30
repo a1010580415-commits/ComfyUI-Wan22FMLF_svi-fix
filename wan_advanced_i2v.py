@@ -9,9 +9,6 @@ import comfy.clip_vision
 import comfy.latent_formats
 from typing import Optional, Tuple, Any, Dict, List
 import math
-import numpy as np
-from io import BytesIO
-from PIL import Image
 
 
 class WanAdvancedI2V(io.ComfyNode):
@@ -44,29 +41,30 @@ class WanAdvancedI2V(io.ComfyNode):
                 io.Image.Input("motion_frames", optional=True),
                 io.Int.Input("video_frame_offset", default=0, min=0, max=1000000, step=1, display_mode=io.NumberDisplay.number, optional=True),
                 io.Combo.Input("long_video_mode", ["DISABLED", "AUTO_CONTINUE", "SVI", "LATENT_CONTINUE"], default="DISABLED", optional=True),
-                io.Int.Input("continue_frames_count", default=5, min=0, max=20, step=1, display_mode=io.NumberDisplay.number, optional=True),
+                io.Int.Input("continue_frames_count", default=5, min=0, max=128, step=1, display_mode=io.NumberDisplay.number, optional=True,
+                           tooltip="AUTO_CONTINUE: number of motion frames\nSVI: number of latent frames from prev_latent"),
                 io.Float.Input("high_noise_start_strength", default=1.0, min=0.0, max=1.0, step=0.05, round=0.01, display_mode=io.NumberDisplay.slider, optional=True),
                 io.Float.Input("high_noise_mid_strength", default=0.8, min=0.0, max=1.0, step=0.05, round=0.01, display_mode=io.NumberDisplay.slider, optional=True),
                 io.Float.Input("low_noise_start_strength", default=1.0, min=0.0, max=1.0, step=0.05, round=0.01, display_mode=io.NumberDisplay.slider, optional=True),
                 io.Float.Input("low_noise_mid_strength", default=0.2, min=0.0, max=1.0, step=0.05, round=0.01, display_mode=io.NumberDisplay.slider, optional=True),
                 io.Float.Input("low_noise_end_strength", default=1.0, min=0.0, max=1.0, step=0.05, round=0.01, display_mode=io.NumberDisplay.slider, optional=True),
-                io.Float.Input("structural_repulsion_boost", default=1.0, min=1.0, max=2.0, step=0.05, round=0.01, display_mode=io.NumberDisplay.slider, optional=True, tooltip="Motion enhancement through spatial gradient conditioning. Only affects high-noise stage."),
+                io.Float.Input("structural_repulsion_boost", default=1.0, min=1.0, max=2.0, step=0.05, round=0.01, display_mode=io.NumberDisplay.slider, optional=True,
+                             tooltip="Motion enhancement through spatial gradient conditioning. Only affects high-noise stage. NOTE: Disabled in SVI mode."),
                 io.ClipVisionOutput.Input("clip_vision_start_image", optional=True),
                 io.ClipVisionOutput.Input("clip_vision_middle_image", optional=True),
                 io.ClipVisionOutput.Input("clip_vision_end_image", optional=True),
+                io.Boolean.Input("enable_start_frame", default=True, optional=True),
                 io.Boolean.Input("enable_middle_frame", default=True, optional=True),
+                io.Boolean.Input("enable_end_frame", default=True, optional=True),
                 io.Latent.Input("prev_latent", optional=True),
-                # 新增SVI参数
-                io.Int.Input("svi_motion_latent_count", default=1, min=0, max=128, step=1, optional=True,
-                           tooltip="[SVI Mode] Number of latent frames from previous video for motion continuity"),
-                io.Boolean.Input("enable_svi_start", default=True, optional=True,
-                               tooltip="[SVI Mode] Enable start frame conditioning in SVI mode"),
-                io.Boolean.Input("enable_svi_middle", default=True, optional=True,
-                               tooltip="[SVI Mode] Enable middle frame conditioning in SVI mode"),
-                io.Boolean.Input("enable_svi_end", default=True, optional=True,
-                               tooltip="[SVI Mode] Enable end frame conditioning in SVI mode"),
-                io.Float.Input("svi_motion_strength", default=1.0, min=0.0, max=1.0, step=0.01, optional=True,
-                             tooltip="[SVI Mode] Influence strength of motion frames"),
+                # 统一的SVI/非SVI参数
+                io.Float.Input("motion_influence", default=1.0, min=0.0, max=2.0, step=0.05, round=0.01, display_mode=io.NumberDisplay.slider, optional=True,
+                             tooltip="SVI: motion latent influence strength\nAUTO_CONTINUE: motion frames influence"),
+                # SVI专用参数
+                io.Combo.Input("svi_overlap_strategy", ["BALANCED", "DYNAMIC_FIRST", "CONTINUITY_FIRST"], default="BALANCED", optional=True,
+                             tooltip="BALANCED: balance dynamic and continuity\nDYNAMIC_FIRST: prioritize motion\nCONTINUITY_FIRST: prioritize seamless connection"),
+                io.Boolean.Input("svi_motion_extrapolation", default=True, optional=True,
+                               tooltip="Enable motion extrapolation to enhance dynamic"),
             ],
             outputs=[
                 io.Conditioning.Output(display_name="positive_high"),
@@ -88,35 +86,439 @@ class WanAdvancedI2V(io.ComfyNode):
                 low_noise_start_strength=1.0, low_noise_mid_strength=0.2, low_noise_end_strength=1.0,
                 structural_repulsion_boost=1.0,
                 clip_vision_start_image=None, clip_vision_middle_image=None,
-                clip_vision_end_image=None, enable_middle_frame=True,
-                prev_latent=None,
-                # 新增SVI参数
-                svi_motion_latent_count=1,
-                enable_svi_start=True,
-                enable_svi_middle=True,
-                enable_svi_end=True,
-                svi_motion_strength=1.0):
+                clip_vision_end_image=None, enable_start_frame=True, enable_middle_frame=True,
+                enable_end_frame=True, prev_latent=None,
+                motion_influence=1.0,
+                svi_overlap_strategy="BALANCED",
+                svi_motion_extrapolation=True):
         
-        # ===========================================
-        # SVI模式处理 - 新增逻辑
-        # ===========================================
+        # 根据模式选择不同的处理逻辑
         if long_video_mode == "SVI":
-            return cls._execute_svi_mode(
+            return cls._execute_svi_mode_enhanced(
                 positive, negative, vae, width, height, length, batch_size,
                 start_image, middle_image, end_image,
-                middle_frame_ratio, prev_latent,
-                svi_motion_latent_count,
-                enable_svi_start, enable_svi_middle, enable_svi_end,
-                svi_motion_strength,
+                middle_frame_ratio, motion_frames, prev_latent,
+                continue_frames_count, motion_influence,
                 high_noise_start_strength, high_noise_mid_strength,
                 low_noise_start_strength, low_noise_mid_strength, low_noise_end_strength,
+                structural_repulsion_boost,
                 clip_vision_start_image, clip_vision_middle_image, clip_vision_end_image,
-                enable_middle_frame
+                enable_start_frame, enable_middle_frame, enable_end_frame,
+                svi_overlap_strategy, svi_motion_extrapolation
             )
+        else:
+            return cls._execute_standard_mode(
+                positive, negative, vae, width, height, length, batch_size,
+                mode, start_image, middle_image, end_image,
+                middle_frame_ratio, motion_frames, video_frame_offset,
+                long_video_mode, continue_frames_count,
+                high_noise_start_strength, high_noise_mid_strength,
+                low_noise_start_strength, low_noise_mid_strength, low_noise_end_strength,
+                structural_repulsion_boost,
+                clip_vision_start_image, clip_vision_middle_image, clip_vision_end_image,
+                enable_start_frame, enable_middle_frame, enable_end_frame,
+                prev_latent, motion_influence
+            )
+    
+    @classmethod
+    def _execute_svi_mode_enhanced(cls, positive, negative, vae, width, height, length, batch_size,
+                                 start_image, middle_image, end_image,
+                                 middle_frame_ratio, motion_frames, prev_latent,
+                                 motion_latent_count, motion_strength,
+                                 high_noise_start_strength, high_noise_mid_strength,
+                                 low_noise_start_strength, low_noise_mid_strength, low_noise_end_strength,
+                                 structural_repulsion_boost,
+                                 clip_vision_start_image, clip_vision_middle_image, clip_vision_end_image,
+                                 enable_start_frame, enable_middle_frame, enable_end_frame,
+                                 overlap_strategy="BALANCED", motion_extrapolation=True):
+        """增强版SVI模式 - 解决多帧重叠动态下降问题"""
+        
+        # 重要：SVI模式下禁用结构增强
+        # 因为结构增强基于图像帧计算，而SVI在潜变量空间工作
+        if structural_repulsion_boost != 1.0:
+            print(f"[SVI模式] structural_repulsion_boost={structural_repulsion_boost} 在SVI模式下无效，使用 motion_strength={motion_strength} 控制动态")
+            # 可选：将结构增强的部分转换为运动强度增强
+            if structural_repulsion_boost > 1.0 and motion_strength < 1.5:
+                extra_boost = min(0.3, (structural_repulsion_boost - 1.0) * 0.5)
+                motion_strength = min(1.5, motion_strength + extra_boost)
+        
+        # 计算基本参数
+        spatial_scale = vae.spacial_compression_encode()
+        latent_channels = vae.latent_channels
+        total_latents = ((length - 1) // 4) + 1  # 1个潜变量帧 = 4个图像帧
+        H = height // spatial_scale
+        W = width // spatial_scale
+        
+        device = comfy.model_management.intermediate_device()
+        
+        # 创建空latent
+        latent = torch.zeros([batch_size, latent_channels, total_latents, H, W], 
+                            device=device)
+        
+        trim_latent = 0
+        trim_image = 0
+        next_offset = 0
+        
+        # 计算中间位置
+        middle_idx = cls._calculate_aligned_position(middle_frame_ratio, length)[0]
+        middle_idx = max(4, min(middle_idx, length - 5))
+        middle_latent_idx = middle_idx // 4
+        
+        # 调整图像尺寸
+        def resize_image(img):
+            if img is None:
+                return None
+            return comfy.utils.common_upscale(
+                img[:1].movedim(-1, 1), width, height, "bilinear", "center"
+            ).movedim(1, -1)
+        
+        start_image = resize_image(start_image) if start_image is not None else None
+        middle_image = resize_image(middle_image) if middle_image is not None else None
+        end_image = resize_image(end_image) if end_image is not None else None
         
         # ===========================================
-        # 原有逻辑（其他模式）
+        # 智能重叠策略实现
         # ===========================================
+        
+        # 检查是否有prev_latent用于继续
+        has_prev_latent = (prev_latent is not None and prev_latent.get("samples") is not None)
+        
+        if has_prev_latent and motion_latent_count > 0:
+            # SVI Continue: 使用prev_latent作为延续参考
+            prev_samples = prev_latent["samples"]
+            
+            # 根据策略选择重叠参数
+            strategies = {
+                "BALANCED": {  # 平衡动态和连贯性
+                    "use_frames": min(4, motion_latent_count),
+                    "decay_rate": 0.7,
+                    "dynamic_boost": 1.2,
+                    "strength_factor": 0.8
+                },
+                "DYNAMIC_FIRST": {  # 动态优先
+                    "use_frames": min(2, motion_latent_count),
+                    "decay_rate": 0.5,
+                    "dynamic_boost": 1.5,
+                    "strength_factor": 0.6
+                },
+                "CONTINUITY_FIRST": {  # 连贯性优先
+                    "use_frames": min(4, motion_latent_count),
+                    "decay_rate": 0.8,
+                    "dynamic_boost": 1.0,
+                    "strength_factor": 1.0
+                }
+            }
+            
+            strategy = strategies.get(overlap_strategy, strategies["BALANCED"])
+            use_frames = min(strategy["use_frames"], prev_samples.shape[2])
+            
+            # ===========================================
+            # 提取和处理运动潜变量
+            # ===========================================
+            
+            # 提取重叠潜变量帧
+            motion_latent_raw = prev_samples[:, :, -use_frames:].clone()
+            
+            # ===========================================
+            # 运动外推增强（可选）
+            # ===========================================
+            
+            if motion_extrapolation and use_frames >= 2:
+                # 计算运动向量（最后两帧的差异）
+                last_two = motion_latent_raw[:, :, -2:].clone()
+                motion_vector = last_two[:, :, 1] - last_two[:, :, 0]
+                
+                # 应用策略中的动态增强
+                enhanced_vector = motion_vector * strategy["dynamic_boost"]
+                
+                # 创建外推帧（基于运动趋势预测下一帧）
+                extrapolated = last_two[:, :, 1:2] + enhanced_vector.unsqueeze(2)
+                
+                # 将外推帧添加到条件中
+                motion_latent = torch.cat([motion_latent_raw, extrapolated], dim=2)
+                use_frames += 1  # 外推帧增加了一帧
+            else:
+                motion_latent = motion_latent_raw
+            
+            # ===========================================
+            # 渐进衰减应用
+            # ===========================================
+            
+            # 应用指数衰减：越新的帧权重越高
+            for i in range(use_frames):
+                decay = strategy["decay_rate"] ** (use_frames - 1 - i)  # 新帧衰减少，旧帧衰减多
+                motion_latent[:, :, i] = motion_latent[:, :, i] * decay
+            
+            # ===========================================
+            # 应用运动强度
+            # ===========================================
+            
+            if motion_strength != 1.0:
+                motion_latent = motion_latent * motion_strength
+            
+            # ===========================================
+            # 构建统一的image_cond_latent
+            # ===========================================
+            
+            # 编码起始图像作为锚点潜变量
+            if start_image is not None:
+                anchor_latent = vae.encode(start_image[:1, :, :, :3])
+            else:
+                # 如果没有起始图像，创建空锚点
+                anchor_latent = torch.zeros([1, latent_channels, 1, H, W], 
+                                           device=device, dtype=latent.dtype)
+            
+            # 创建基础image_cond_latent
+            image_cond_latent = torch.zeros(1, latent_channels, total_latents, H, W, 
+                                           dtype=anchor_latent.dtype, device=anchor_latent.device)
+            image_cond_latent = comfy.latent_formats.Wan21().process_out(image_cond_latent)
+            
+            # 在位置0插入锚点（如果起始帧启用）
+            if enable_start_frame:
+                image_cond_latent[:, :, :1] = anchor_latent
+            
+            # ===========================================
+            # 将运动潜变量放入合适位置
+            # ===========================================
+            
+            # 运动潜变量放在锚点之后
+            motion_start = 1 if enable_start_frame else 0
+            motion_end = min(motion_start + use_frames, total_latents)
+            
+            if motion_end > motion_start:
+                # 确保尺寸匹配
+                motion_to_use = motion_latent[:, :, :motion_end-motion_start]
+                image_cond_latent[:, :, motion_start:motion_end] = motion_to_use
+            
+            # 插入中间图像（如果提供）
+            if middle_image is not None and enable_middle_frame:
+                middle_latent = vae.encode(middle_image[:1, :, :, :3])
+                if middle_latent_idx < total_latents:
+                    # 确保中间位置不与其他条件重叠
+                    actual_middle_idx = middle_latent_idx
+                    while (actual_middle_idx < motion_end and actual_middle_idx < total_latents):
+                        actual_middle_idx += 1
+                    
+                    if actual_middle_idx < total_latents:
+                        image_cond_latent[:, :, actual_middle_idx:actual_middle_idx+1] = middle_latent
+                        middle_latent_idx = actual_middle_idx  # 更新中间位置
+            
+            # 插入结束图像（如果提供）
+            if end_image is not None and enable_end_frame:
+                end_latent = vae.encode(end_image[:1, :, :, :3])
+                image_cond_latent[:, :, total_latents-1:total_latents] = end_latent
+            
+            # ===========================================
+            # 创建自适应掩码
+            # ===========================================
+            
+            # 根据重叠帧数动态调整条件强度
+            frame_factor = strategy["strength_factor"] / math.sqrt(use_frames) if use_frames > 0 else 1.0
+            
+            # 调整高噪声强度
+            effective_high_start = high_noise_start_strength * frame_factor
+            
+            # 调整低噪声强度
+            effective_low_start = low_noise_start_strength * frame_factor
+            
+            # 创建掩码
+            mask_svi_high = torch.ones((1, 4, total_latents, H, W), 
+                                      device=device, dtype=anchor_latent.dtype)
+            mask_svi_low = torch.ones((1, 4, total_latents, H, W), 
+                                     device=device, dtype=anchor_latent.dtype)
+            
+            # 应用起始帧强度（如果启用）
+            if enable_start_frame:
+                mask_svi_high[:, :, :1] = max(0.0, 1.0 - effective_high_start)
+                mask_svi_low[:, :, :1] = max(0.0, 1.0 - effective_low_start)
+            
+            # 应用运动潜变量区域的渐进衰减掩码
+            for i in range(motion_start, motion_end):
+                # 计算该帧的衰减权重（离锚点越远，条件越弱）
+                distance = i - motion_start
+                frame_decay = strategy["decay_rate"] ** distance
+                
+                # 高噪声掩码：渐进衰减
+                mask_high_val = 1.0 - (effective_high_start * frame_decay)
+                mask_svi_high[:, :, i] = max(0.1, min(0.9, mask_high_val))
+                
+                # 低噪声掩码：保持较强条件但也要衰减
+                mask_low_val = 1.0 - (effective_low_start * frame_decay * 0.7)
+                mask_svi_low[:, :, i] = max(0.3, min(0.9, mask_low_val))
+            
+            # 应用中间帧强度
+            if middle_image is not None and enable_middle_frame:
+                if middle_latent_idx < total_latents:
+                    mask_svi_high[:, :, middle_latent_idx:middle_latent_idx+1] = max(
+                        0.0, 1.0 - high_noise_mid_strength
+                    )
+                    mask_svi_low[:, :, middle_latent_idx:middle_latent_idx+1] = max(
+                        0.0, 1.0 - low_noise_mid_strength
+                    )
+            
+            # 应用结束帧强度
+            if end_image is not None and enable_end_frame:
+                mask_svi_high[:, :, total_latents-1:total_latents] = 0.0  # 完全使用结束帧
+                mask_svi_low[:, :, total_latents-1:total_latents] = max(
+                    0.0, 1.0 - low_noise_end_strength
+                )
+            
+            # 构建条件
+            positive_high_noise = node_helpers.conditioning_set_values(positive, {
+                "concat_latent_image": image_cond_latent,
+                "concat_mask": mask_svi_high
+            })
+            
+            positive_low_noise = node_helpers.conditioning_set_values(positive, {
+                "concat_latent_image": image_cond_latent,
+                "concat_mask": mask_svi_low
+            })
+            
+            negative_out = node_helpers.conditioning_set_values(negative, {
+                "concat_latent_image": image_cond_latent,
+                "concat_mask": mask_svi_high
+            })
+            
+            # 处理clip vision
+            clip_vision_output = cls._merge_clip_vision_outputs(
+                clip_vision_start_image if enable_start_frame else None, 
+                clip_vision_middle_image if enable_middle_frame else None, 
+                clip_vision_end_image if enable_end_frame else None
+            )
+            
+            if clip_vision_output is not None:
+                positive_low_noise = node_helpers.conditioning_set_values(
+                    positive_low_noise, 
+                    {"clip_vision_output": clip_vision_output}
+                )
+                negative_out = node_helpers.conditioning_set_values(
+                    negative_out,
+                    {"clip_vision_output": clip_vision_output}
+                )
+            
+            out_latent = {"samples": latent}
+            
+            return io.NodeOutput(positive_high_noise, positive_low_noise, negative_out, out_latent,
+                    trim_latent, trim_image, next_offset)
+        
+        elif start_image is not None:
+            # SVI First: 没有prev_latent，使用start_image作为唯一锚点
+            # 这部分保持原始逻辑
+            
+            # 编码start_image作为锚点潜变量
+            anchor_latent = vae.encode(start_image[:1, :, :, :3])
+            
+            # 构建image_cond_latent
+            image_cond_latent = torch.zeros(1, latent_channels, total_latents, H, W, 
+                                           dtype=anchor_latent.dtype, device=anchor_latent.device)
+            image_cond_latent = comfy.latent_formats.Wan21().process_out(image_cond_latent)
+            
+            # 在位置0插入锚点（如果起始帧启用）
+            if enable_start_frame:
+                image_cond_latent[:, :, :1] = anchor_latent
+            
+            # 插入中间图像（如果提供）
+            if middle_image is not None and enable_middle_frame:
+                middle_latent = vae.encode(middle_image[:1, :, :, :3])
+                if middle_latent_idx < total_latents:
+                    image_cond_latent[:, :, middle_latent_idx:middle_latent_idx+1] = middle_latent
+            
+            # 插入结束图像（如果提供）
+            if end_image is not None and enable_end_frame:
+                end_latent = vae.encode(end_image[:1, :, :, :3])
+                image_cond_latent[:, :, total_latents-1:total_latents] = end_latent
+            
+            # 创建掩码
+            mask_svi_high = torch.ones((1, 4, total_latents, H, W), 
+                                      device=device, dtype=anchor_latent.dtype)
+            mask_svi_low = torch.ones((1, 4, total_latents, H, W), 
+                                     device=device, dtype=anchor_latent.dtype)
+            
+            # 应用起始帧强度
+            if enable_start_frame:
+                mask_svi_high[:, :, :1] = max(0.0, 1.0 - high_noise_start_strength)
+                mask_svi_low[:, :, :1] = max(0.0, 1.0 - low_noise_start_strength)
+            
+            # 应用中间帧强度
+            if middle_image is not None and enable_middle_frame:
+                mask_svi_high[:, :, middle_latent_idx:middle_latent_idx+1] = max(
+                    0.0, 1.0 - high_noise_mid_strength
+                )
+                mask_svi_low[:, :, middle_latent_idx:middle_latent_idx+1] = max(
+                    0.0, 1.0 - low_noise_mid_strength
+                )
+            
+            # 应用结束帧强度
+            if end_image is not None and enable_end_frame:
+                mask_svi_high[:, :, total_latents-1:total_latents] = 0.0
+                mask_svi_low[:, :, total_latents-1:total_latents] = max(
+                    0.0, 1.0 - low_noise_end_strength
+                )
+            
+            # 构建条件
+            positive_high_noise = node_helpers.conditioning_set_values(positive, {
+                "concat_latent_image": image_cond_latent,
+                "concat_mask": mask_svi_high
+            })
+            
+            positive_low_noise = node_helpers.conditioning_set_values(positive, {
+                "concat_latent_image": image_cond_latent,
+                "concat_mask": mask_svi_low
+            })
+            
+            negative_out = node_helpers.conditioning_set_values(negative, {
+                "concat_latent_image": image_cond_latent,
+                "concat_mask": mask_svi_high
+            })
+            
+            # 处理clip vision
+            clip_vision_output = cls._merge_clip_vision_outputs(
+                clip_vision_start_image if enable_start_frame else None, 
+                clip_vision_middle_image if enable_middle_frame else None, 
+                clip_vision_end_image if enable_end_frame else None
+            )
+            
+            if clip_vision_output is not None:
+                positive_low_noise = node_helpers.conditioning_set_values(
+                    positive_low_noise, 
+                    {"clip_vision_output": clip_vision_output}
+                )
+                negative_out = node_helpers.conditioning_set_values(
+                    negative_out,
+                    {"clip_vision_output": clip_vision_output}
+                )
+            
+            out_latent = {"samples": latent}
+            
+            return io.NodeOutput(positive_high_noise, positive_low_noise, negative_out, out_latent,
+                    trim_latent, trim_image, next_offset)
+        else:
+            # 如果没有起始图像和prev_latent，回退到标准模式
+            return cls._execute_standard_mode(
+                positive, negative, vae, width, height, length, batch_size,
+                "NORMAL", start_image, middle_image, end_image,
+                middle_frame_ratio, motion_frames, 0,
+                "DISABLED", 0,
+                high_noise_start_strength, high_noise_mid_strength,
+                low_noise_start_strength, low_noise_mid_strength, low_noise_end_strength,
+                structural_repulsion_boost,
+                clip_vision_start_image, clip_vision_middle_image, clip_vision_end_image,
+                enable_start_frame, enable_middle_frame, enable_end_frame,
+                prev_latent, motion_strength
+            )
+    
+    @classmethod
+    def _execute_standard_mode(cls, positive, negative, vae, width, height, length, batch_size,
+                              mode, start_image, middle_image, end_image,
+                              middle_frame_ratio, motion_frames, video_frame_offset,
+                              long_video_mode, continue_frames_count,
+                              high_noise_start_strength, high_noise_mid_strength,
+                              low_noise_start_strength, low_noise_mid_strength, low_noise_end_strength,
+                              structural_repulsion_boost,
+                              clip_vision_start_image, clip_vision_middle_image, clip_vision_end_image,
+                              enable_start_frame, enable_middle_frame, enable_end_frame,
+                              prev_latent, motion_influence):
+        """标准模式处理逻辑（你的PR版本原始逻辑）"""
         spacial_scale = vae.spacial_compression_encode()
         latent_channels = vae.latent_channels
         latent_t = ((length - 1) // 4) + 1
@@ -157,6 +559,11 @@ class WanAdvancedI2V(io.ComfyNode):
             motion_frames = comfy.utils.common_upscale(
                 motion_frames.movedim(-1, 1), width, height, "area", "center"
             ).movedim(1, -1)
+            
+            # 应用运动影响强度
+            if motion_influence != 1.0:
+                # 对运动帧进行强度调整
+                motion_frames = motion_frames * motion_influence + (1.0 - motion_influence) * 0.5
         
         if start_image is not None:
             if is_pure_triple_mode:
@@ -192,8 +599,6 @@ class WanAdvancedI2V(io.ComfyNode):
         mask_high_noise = mask_base.clone()
         mask_low_noise = mask_base.clone()
         
-        svi_continue_mode = False
-
         # --- Latent Continue Mode Logic ---
         latent_continue_mode = False
         prev_latent_for_concat = None
@@ -214,16 +619,67 @@ class WanAdvancedI2V(io.ComfyNode):
         # --- End of Latent Continue Mode Logic ---
 
         # 原有逻辑继续...
-        # ... [这里省略原有的大段逻辑，保持原样]
+        if has_motion_frames and long_video_mode != 'SVI' and long_video_mode != 'LATENT_CONTINUE':
+            image[:motion_frames.shape[0]] = motion_frames[:, :, :, :3]
+            
+            motion_latent_frames = ((motion_frames.shape[0] - 1) // 4) + 1
+            mask_high_noise[:, :, :motion_latent_frames * 4] = 0.0
+            
+            mask_low_noise[:, :, :motion_latent_frames * 4] = 0.0
+            
+            if middle_image is not None and enable_middle_frame:
+                image[middle_idx:middle_idx + 1] = middle_image
+                
+                start_range = max(0, middle_idx)
+                end_range = min(length, middle_idx + 4)
+                
+                mask_high_noise[:, :, start_range:end_range] = max(0.0, 1.0 - high_noise_mid_strength)
+                mask_low_noise[:, :, start_range:end_range] = max(0.0, 1.0 - low_noise_mid_strength)
+            
+            if end_image is not None and enable_end_frame:
+                image[-1:] = end_image[:, :, :, :3]
+                mask_high_noise[:, :, -1:] = 0.0
+                mask_low_noise[:, :, -1:] = max(0.0, 1.0 - low_noise_end_strength)
+        else:
+            if start_image is not None and long_video_mode != 'LATENT_CONTINUE' and enable_start_frame:
+                image[:start_image.shape[0]] = start_image[:, :, :, :3]
+                
+                if is_pure_triple_mode:
+                    mask_range = min(start_image.shape[0] + 3, length)
+                    mask_high_noise[:, :, :mask_range] = max(0.0, 1.0 - high_noise_start_strength)
+                    mask_low_noise[:, :, :mask_range] = max(0.0, 1.0 - low_noise_start_strength)
+                else:
+                    start_latent_frames = ((start_image.shape[0] - 1) // 4) + 1
+                    mask_high_noise[:, :, :start_latent_frames * 4] = max(0.0, 1.0 - high_noise_start_strength)
+                    mask_low_noise[:, :, :start_latent_frames * 4] = max(0.0, 1.0 - low_noise_start_strength)
+            
+            if middle_image is not None and enable_middle_frame:
+                image[middle_idx:middle_idx + 1] = middle_image
+                
+                start_range = max(0, middle_idx)
+                end_range = min(length, middle_idx + 4)
+                
+                mask_high_noise[:, :, start_range:end_range] = max(0.0, 1.0 - high_noise_mid_strength)
+                mask_low_noise[:, :, start_range:end_range] = max(0.0, 1.0 - low_noise_mid_strength)
+            
+            if end_image is not None and enable_end_frame:
+                image[-end_image.shape[0]:] = end_image[:, :, :, :3]
+                
+                if is_pure_triple_mode:
+                    mask_high_noise[:, :, -end_image.shape[0]:] = 0.0
+                    mask_low_noise[:, :, -end_image.shape[0]:] = max(0.0, 1.0 - low_noise_end_strength)
+                else:
+                    mask_high_noise[:, :, -1:] = 0.0
+                    mask_low_noise[:, :, -1:] = max(0.0, 1.0 - low_noise_end_strength)
         
-        # 原有逻辑的结尾部分
         if latent_continue_mode and prev_latent_for_concat is not None:
             concat_latent_image = vae.encode(image[:, :, :, :3])
             concat_latent_image[:, :, 0:1, :, :] = prev_latent_for_concat
         else:
             concat_latent_image = vae.encode(image[:, :, :, :3])
         
-        if structural_repulsion_boost > 1.001 and length > 4:
+        # 结构增强（仅在非SVI模式中有效）
+        if structural_repulsion_boost > 1.001 and length > 4 and long_video_mode != 'SVI':
             mask_h, mask_w = mask_high_noise.shape[-2], mask_high_noise.shape[-1]
             boost_factor = structural_repulsion_boost - 1.0
             
@@ -246,21 +702,52 @@ class WanAdvancedI2V(io.ComfyNode):
                 spatial_gradient = torch.clamp(spatial_gradient, 0.02, 1.0)
                 return spatial_gradient[0, 0]
             
-            # 原有结构增强逻辑...
-            # [保持原有逻辑]
+            if start_image is not None and middle_image is not None and enable_middle_frame:
+                start_img = start_image[0:1].to(device)
+                mid_img = middle_image[0:1].to(device)
+                
+                spatial_gradient_1 = create_spatial_gradient(start_img, mid_img)
+                
+                if spatial_gradient_1 is not None:
+                    start_end = start_image.shape[0] + 3
+                    mid_protect_start = max(start_end, middle_idx - 4)
+                    mid_protect_end = middle_idx + 5
+                    transition_end = min(mid_protect_start, length)
+                    
+                    for frame_idx in range(start_end, transition_end):
+                        current_mask = mask_high_noise[:, :, frame_idx, :, :]
+                        mask_high_noise[:, :, frame_idx, :, :] = current_mask * spatial_gradient_1
+            
+            if middle_image is not None and end_image is not None and enable_middle_frame:
+                mid_img = middle_image[0:1].to(device)
+                end_img = end_image[-1:].to(device)
+                
+                spatial_gradient_2 = create_spatial_gradient(mid_img, end_img)
+                
+                if spatial_gradient_2 is not None:
+                    mid_protect_end = middle_idx + 5
+                    transition_start = mid_protect_end
+                    end_start = length - end_image.shape[0]
+                    
+                    for frame_idx in range(transition_start, end_start):
+                        current_mask = mask_high_noise[:, :, frame_idx, :, :]
+                        mask_high_noise[:, :, frame_idx, :, :] = current_mask * spatial_gradient_2
+            
+            if start_image is not None and end_image is not None and (middle_image is None or not enable_middle_frame):
+                start_img = start_image[0:1].to(device)
+                end_img = end_image[-1:].to(device)
+                
+                spatial_gradient = create_spatial_gradient(start_img, end_img)
+                
+                if spatial_gradient is not None:
+                    start_end = start_image.shape[0] + 3
+                    end_start = length - end_image.shape[0]
+                    
+                    for frame_idx in range(start_end, end_start):
+                        current_mask = mask_high_noise[:, :, frame_idx, :, :]
+                        mask_high_noise[:, :, frame_idx, :, :] = current_mask * spatial_gradient
         
-        if svi_continue_mode:
-            # Second pass: motion_frames is injected into latent first frame
-            # start_image used for low noise conditioning as concat image
-            image_low = torch.ones((length, height, width, 3), device=device) * 0.5
-            
-            if start_image is not None:
-                image_low[:start_image.shape[0]] = start_image[:, :, :, :3]
-                start_latent_frames = ((start_image.shape[0] - 1) // 4) + 1
-                mask_low_noise[:, :, :start_latent_frames * 4] = 0.0
-            
-            concat_latent_image_low = vae.encode(image_low[:, :, :, :3])
-        elif latent_continue_mode:
+        if latent_continue_mode:
             # LATENT_CONTINUE mode: concat image and concat latent should be the same
             # Use the same image for both high and low noise conditioning
             concat_latent_image_low = concat_latent_image
@@ -278,13 +765,13 @@ class WanAdvancedI2V(io.ComfyNode):
             
             if motion_frames is not None and low_noise_start_strength > 0.0:
                 image_low_only[:motion_frames.shape[0]] = motion_frames[:, :, :, :3]
-            elif start_image is not None and low_noise_start_strength > 0.0:
+            elif start_image is not None and low_noise_start_strength > 0.0 and enable_start_frame:
                 image_low_only[:start_image.shape[0]] = start_image[:, :, :, :3]
             
             if middle_image is not None and low_noise_mid_strength > 0.0 and enable_middle_frame:
                 image_low_only[middle_idx:middle_idx + 1] = middle_image
             
-            if end_image is not None and low_noise_end_strength > 0.0:
+            if end_image is not None and low_noise_end_strength > 0.0 and enable_end_frame:
                 if is_pure_triple_mode:
                     image_low_only[-end_image.shape[0]:] = end_image[:, :, :, :3]
                 else:
@@ -320,9 +807,9 @@ class WanAdvancedI2V(io.ComfyNode):
         })
         
         clip_vision_output = cls._merge_clip_vision_outputs(
-            clip_vision_start_image, 
-            clip_vision_middle_image, 
-            clip_vision_end_image
+            clip_vision_start_image if enable_start_frame else None, 
+            clip_vision_middle_image if enable_middle_frame else None, 
+            clip_vision_end_image if enable_end_frame else None
         )
         
         if clip_vision_output is not None:
@@ -340,257 +827,16 @@ class WanAdvancedI2V(io.ComfyNode):
         return io.NodeOutput(positive_high_noise, positive_low_noise, negative_out, out_latent,
                 trim_latent, trim_image, next_offset)
     
-    # ===========================================
-    # SVI模式核心方法 - 新增
-    # ===========================================
     @classmethod
-    def _execute_svi_mode(cls, positive, negative, vae, width, height, length, batch_size,
-                         start_image, middle_image, end_image,
-                         middle_frame_ratio, prev_latent,
-                         motion_latent_count,
-                         enable_start, enable_middle, enable_end,
-                         motion_strength,
-                         start_strength, middle_strength,
-                         low_start_strength, low_middle_strength, low_end_strength,
-                         clip_vision_start, clip_vision_middle, clip_vision_end,
-                         enable_middle_frame):
-        """执行SVI模式 - 兼容多帧条件"""
-        # 计算基本参数
-        spatial_scale = vae.spacial_compression_encode()
-        latent_channels = vae.latent_channels
-        total_latents = ((length - 1) // 4) + 1
-        H = height // spatial_scale
-        W = width // spatial_scale
-        
-        device = comfy.model_management.intermediate_device()
-        
-        # 创建空latent
-        latent = torch.zeros([batch_size, latent_channels, total_latents, H, W], 
-                            device=device)
-        
-        # 步骤1：调整图像尺寸
-        def resize_image(img):
-            if img is None:
-                return None
-            return comfy.utils.common_upscale(
-                img[:1].movedim(-1, 1), width, height, "bilinear", "center"
-            ).movedim(1, -1)
-        
-        start_image = resize_image(start_image) if start_image is not None else None
-        middle_image = resize_image(middle_image) if middle_image is not None else None
-        end_image = resize_image(end_image) if end_image is not None else None
-        
-        # 步骤2：计算各条件的位置
-        positions = {}
-        
-        # Prev Latent位置
-        if prev_latent is not None and motion_latent_count > 0:
-            prev_samples = prev_latent.get("samples")
-            if prev_samples is not None:
-                actual_motion_count = min(motion_latent_count, prev_samples.shape[2], total_latents)
-                positions['motion'] = {
-                    'type': 'motion',
-                    'latent_start': 0,
-                    'latent_end': actual_motion_count,
-                    'strength': motion_strength
-                }
-        
-        # 计算start位置（放在motion之后）
-        start_latent_idx = positions.get('motion', {}).get('latent_end', 0)
-        if enable_start and start_latent_idx < total_latents and start_image is not None:
-            positions['start'] = {
-                'type': 'start',
-                'latent_start': start_latent_idx,
-                'latent_end': start_latent_idx + 1,
-                'strength': start_strength
-            }
-        
-        # 计算middle位置
-        if enable_middle and enable_middle_frame and middle_image is not None:
-            # 计算中间位置并对齐
-            middle_pixel_idx = int(total_latents * 4 * middle_frame_ratio)
-            middle_latent_idx = max(1, min(middle_pixel_idx // 4, total_latents - 2))
-            
-            # 确保middle位置不与其他条件重叠
-            while any(middle_latent_idx >= pos.get('latent_start', -1) and 
-                     middle_latent_idx < pos.get('latent_end', -1) 
-                     for pos in positions.values()):
-                middle_latent_idx += 1
-                if middle_latent_idx >= total_latents - 1:
-                    middle_latent_idx = total_latents - 2
-                    break
-            
-            positions['middle'] = {
-                'type': 'middle',
-                'latent_start': middle_latent_idx,
-                'latent_end': middle_latent_idx + 1,
-                'strength': middle_strength
-            }
-        
-        # 计算end位置
-        if enable_end and end_image is not None:
-            end_latent_idx = total_latents - 1
-            positions['end'] = {
-                'type': 'end',
-                'latent_start': end_latent_idx,
-                'latent_end': end_latent_idx + 1,
-                'strength': low_end_strength  # 注意：使用low_end_strength
-            }
-        
-        # 步骤3：准备各条件潜变量
-        condition_latents = {}
-        
-        # Prev Latent
-        if 'motion' in positions and prev_latent is not None:
-            prev_samples = prev_latent.get("samples")
-            if prev_samples is not None:
-                pos = positions['motion']
-                actual_count = pos['latent_end'] - pos['latent_start']
-                condition_latents['motion'] = {
-                    'latent': prev_samples[:, :, -actual_count:].clone(),
-                    'position': pos
-                }
-        
-        # 起始帧潜变量
-        if 'start' in positions and start_image is not None:
-            pos = positions['start']
-            start_latent = vae.encode(start_image[:, :, :, :3])
-            condition_latents['start'] = {
-                'latent': start_latent,
-                'position': pos
-            }
-        
-        # 中间帧潜变量
-        if 'middle' in positions and middle_image is not None:
-            pos = positions['middle']
-            middle_latent = vae.encode(middle_image[:, :, :, :3])
-            condition_latents['middle'] = {
-                'latent': middle_latent,
-                'position': pos
-            }
-        
-        # 结束帧潜变量
-        if 'end' in positions and end_image is not None:
-            pos = positions['end']
-            end_latent = vae.encode(end_image[:, :, :, :3])
-            condition_latents['end'] = {
-                'latent': end_latent,
-                'position': pos
-            }
-        
-        # 步骤4：构建统一的image_cond_latent
-        image_cond_latent = torch.zeros(1, latent_channels, total_latents, H, W,
-                                       dtype=torch.float32, device=device)
-        
-        # 将各条件潜变量放入对应位置
-        for key, cond_data in condition_latents.items():
-            cond_latent = cond_data['latent']
-            pos = cond_data['position']
-            
-            latent_start = pos['latent_start']
-            latent_end = pos['latent_end']
-            latent_length = latent_end - latent_start
-            
-            if latent_length > 0 and latent_start < total_latents:
-                # 确保latent尺寸匹配
-                latent_to_use = cond_latent
-                if cond_latent.shape[2] > latent_length:
-                    latent_to_use = cond_latent[:, :, :latent_length]
-                elif cond_latent.shape[2] < latent_length:
-                    # 如果提供的latent不够，填充零
-                    padding = torch.zeros(1, latent_channels, latent_length - cond_latent.shape[2],
-                                         H, W, device=device, dtype=cond_latent.dtype)
-                    latent_to_use = torch.cat([cond_latent, padding], dim=2)
-                
-                actual_end = min(latent_end, total_latents)
-                actual_length = actual_end - latent_start
-                if actual_length > 0:
-                    image_cond_latent[:, :, latent_start:actual_end] = latent_to_use[:, :, :actual_length]
-        
-        # 步骤5：构建统一的掩码
-        mask_high = torch.ones((1, 1, total_latents, H, W), device=device)
-        mask_low = torch.ones((1, 1, total_latents, H, W), device=device)
-        
-        # 应用各条件的强度到掩码
-        for key, cond_data in condition_latents.items():
-            pos = cond_data['position']
-            strength = pos['strength']
-            
-            latent_start = pos['latent_start']
-            latent_end = min(pos['latent_end'], total_latents)
-            
-            if latent_end > latent_start:
-                # 计算掩码值：strength=1 -> mask=0 (完全使用条件)
-                #             strength=0 -> mask=1 (完全忽略条件)
-                mask_value = 1.0 - strength
-                
-                # 应用到高噪声掩码
-                mask_high[:, :, latent_start:latent_end] = mask_value
-                
-                # 低噪声掩码：对于start和middle使用不同的强度
-                if key == 'start':
-                    low_strength = low_start_strength
-                elif key == 'middle':
-                    low_strength = low_middle_strength
-                elif key == 'end':
-                    low_strength = low_end_strength
-                else:
-                    low_strength = strength
-                
-                mask_low[:, :, latent_start:latent_end] = 1.0 - low_strength
-        
-        # 重新调整掩码形状以匹配模型期望 [batch, 4, latent_t, H, W]
-        # 注意：这里需要将掩码扩展为4个通道以匹配concat_latent_image
-        mask_high_reshaped = mask_high.view(
-            1, total_latents, H, W
-        ).unsqueeze(1).repeat(1, 4, 1, 1, 1)
-        
-        mask_low_reshaped = mask_low.view(
-            1, total_latents, H, W
-        ).unsqueeze(1).repeat(1, 4, 1, 1, 1)
-        
-        # 步骤6：构建条件
-        positive_high_noise = node_helpers.conditioning_set_values(positive, {
-            "concat_latent_image": image_cond_latent,
-            "concat_mask": mask_high_reshaped
-        })
-        
-        positive_low_noise = node_helpers.conditioning_set_values(positive, {
-            "concat_latent_image": image_cond_latent,
-            "concat_mask": mask_low_reshaped
-        })
-        
-        negative_out = node_helpers.conditioning_set_values(negative, {
-            "concat_latent_image": image_cond_latent,
-            "concat_mask": mask_high_reshaped
-        })
-        
-        # 合并Clip Vision输出
-        clip_vision_output = cls._merge_clip_vision_outputs(
-            clip_vision_start, clip_vision_middle, clip_vision_end
-        )
-        
-        if clip_vision_output is not None:
-            positive_low_noise = node_helpers.conditioning_set_values(
-                positive_low_noise,
-                {"clip_vision_output": clip_vision_output}
-            )
-            negative_out = node_helpers.conditioning_set_values(
-                negative_out,
-                {"clip_vision_output": clip_vision_output}
-            )
-        
-        out_latent = {"samples": latent}
-        
-        return io.NodeOutput(positive_high_noise, positive_low_noise, negative_out, out_latent,
-                            0, 0, 0)  # trim_latent, trim_image, next_offset 都为0
+    def _calculate_aligned_position(cls, ratio, total_frames):
+        desired_pixel_idx = int(total_frames * ratio)
+        latent_idx = desired_pixel_idx // 4
+        aligned_pixel_idx = latent_idx * 4
+        aligned_pixel_idx = max(0, min(aligned_pixel_idx, total_frames - 1))
+        return aligned_pixel_idx, latent_idx
     
-    # ===========================================
-    # 辅助方法 - 新增或修改
-    # ===========================================
     @classmethod
     def _merge_clip_vision_outputs(cls, *outputs):
-        """合并多个Clip Vision输出"""
         valid_outputs = [o for o in outputs if o is not None]
         
         if not valid_outputs:
@@ -599,22 +845,12 @@ class WanAdvancedI2V(io.ComfyNode):
         if len(valid_outputs) == 1:
             return valid_outputs[0]
         
-        # 合并所有输出
         all_states = [o.penultimate_hidden_states for o in valid_outputs]
         combined_states = torch.cat(all_states, dim=-2)
         
         result = comfy.clip_vision.Output()
         result.penultimate_hidden_states = combined_states
         return result
-    
-    @classmethod
-    def _calculate_aligned_position(cls, ratio, total_frames):
-        """计算对齐的位置"""
-        desired_pixel_idx = int(total_frames * ratio)
-        latent_idx = desired_pixel_idx // 4
-        aligned_pixel_idx = latent_idx * 4
-        aligned_pixel_idx = max(0, min(aligned_pixel_idx, total_frames - 1))
-        return aligned_pixel_idx, latent_idx
 
 
 class WanAdvancedExtractLastFrames(io.ComfyNode):
@@ -640,6 +876,7 @@ class WanAdvancedExtractLastFrames(io.ComfyNode):
             out = {"samples": torch.zeros_like(samples["samples"][:, :, :0])}
             return io.NodeOutput(out)
         
+        # 1个潜变量帧 = 4个图像帧
         latent_frames = ((num_frames - 1) // 4) + 1
         last_latent = samples["samples"][:, :, -latent_frames:].clone()
         out = {"samples": last_latent}
@@ -674,135 +911,16 @@ class WanAdvancedExtractLastImages(io.ComfyNode):
 
 
 # ===========================================
-# SVI控制面板 - 新增
-# ===========================================
-class WanSVIControlPanel(io.ComfyNode):
-    """SVI控制面板 - 提供预设和参数控制"""
-    
-    @classmethod
-    def define_schema(cls) -> io.Schema:
-        return io.Schema(
-            node_id="WanSVIControlPanel",
-            display_name="Wan SVI Control Panel",
-            category="ComfyUI-Wan22FMLF/Advanced",
-            inputs=[
-                io.Combo.Input("preset", [
-                    "Balanced", "Strong Motion", "Structure Guided", 
-                    "Seamless Loop", "Creative", "Custom"
-                ], default="Balanced", 
-                tooltip="预设参数组合，选择Custom可手动调整"),
-                
-                # 运动参数
-                io.Int.Input("motion_latent_count", default=1, min=0, max=128, step=1,
-                           tooltip="从前一个视频中使用的潜变量帧数"),
-                io.Float.Input("motion_strength", default=1.0, min=0.0, max=1.0, step=0.01,
-                             tooltip="运动帧的影响强度"),
-                
-                # 多帧强度
-                io.Float.Input("start_strength", default=1.0, min=0.0, max=1.0, step=0.01,
-                             tooltip="起始帧的影响强度"),
-                io.Float.Input("middle_strength", default=0.8, min=0.0, max=1.0, step=0.01,
-                             tooltip="中间帧的影响强度"),
-                io.Float.Input("end_strength", default=0.8, min=0.0, max=1.0, step=0.01,
-                             tooltip="结束帧的影响强度"),
-                
-                # 位置控制
-                io.Float.Input("middle_position", default=0.5, min=0.0, max=1.0, step=0.01,
-                             tooltip="中间帧的位置（0=开始，1=结束）"),
-                
-                # 启用控制
-                io.Boolean.Input("enable_start", default=True,
-                               tooltip="启用起始帧条件"),
-                io.Boolean.Input("enable_middle", default=True,
-                               tooltip="启用中间帧条件"),
-                io.Boolean.Input("enable_end", default=True,
-                               tooltip="启用结束帧条件"),
-            ],
-            outputs=[
-                io.Int.Output(display_name="motion_latent_count_out"),
-                io.Float.Output(display_name="motion_strength_out"),
-                io.Float.Output(display_name="start_strength_out"),
-                io.Float.Output(display_name="middle_strength_out"),
-                io.Float.Output(display_name="end_strength_out"),
-                io.Float.Output(display_name="middle_position_out"),
-                io.Boolean.Output(display_name="enable_start_out"),
-                io.Boolean.Output(display_name="enable_middle_out"),
-                io.Boolean.Output(display_name="enable_end_out"),
-            ],
-        )
-    
-    @classmethod
-    def execute(cls, preset="Balanced", motion_latent_count=1, motion_strength=1.0,
-                start_strength=1.0, middle_strength=0.8, end_strength=0.8,
-                middle_position=0.5, enable_start=True, enable_middle=True, enable_end=True):
-        
-        # 应用预设（除非选择Custom）
-        if preset != "Custom":
-            presets = {
-                "Balanced": {
-                    "motion_count": 1, "motion_str": 1.0,
-                    "start_str": 1.0, "middle_str": 0.8, "end_str": 0.8,
-                    "middle_pos": 0.5,
-                    "enable_start": True, "enable_middle": True, "enable_end": True
-                },
-                "Strong Motion": {
-                    "motion_count": 3, "motion_str": 1.0,
-                    "start_str": 0.9, "middle_str": 0.6, "end_str": 0.7,
-                    "middle_pos": 0.4,
-                    "enable_start": True, "enable_middle": True, "enable_end": True
-                },
-                "Structure Guided": {
-                    "motion_count": 1, "motion_str": 0.8,
-                    "start_str": 0.7, "middle_str": 1.0, "end_str": 0.9,
-                    "middle_pos": 0.5,
-                    "enable_start": True, "enable_middle": True, "enable_end": True
-                },
-                "Seamless Loop": {
-                    "motion_count": 2, "motion_str": 1.0,
-                    "start_str": 1.0, "middle_str": 0.0, "end_str": 1.0,
-                    "middle_pos": 0.5,
-                    "enable_start": True, "enable_middle": False, "enable_end": True
-                },
-                "Creative": {
-                    "motion_count": 0, "motion_str": 0.5,
-                    "start_str": 0.5, "middle_str": 0.5, "end_str": 0.5,
-                    "middle_pos": 0.3,
-                    "enable_start": True, "enable_middle": True, "enable_end": True
-                }
-            }
-            
-            if preset in presets:
-                p = presets[preset]
-                motion_latent_count = p["motion_count"]
-                motion_strength = p["motion_str"]
-                start_strength = p["start_str"]
-                middle_strength = p["middle_str"]
-                end_strength = p["end_str"]
-                middle_position = p["middle_pos"]
-                enable_start = p["enable_start"]
-                enable_middle = p["enable_middle"]
-                enable_end = p["enable_end"]
-        
-        return io.NodeOutput(
-            motion_latent_count, motion_strength,
-            start_strength, middle_strength, end_strength,
-            middle_position, enable_start, enable_middle, enable_end
-        )
-
-
-# ===========================================
-# 节点注册 - 修改为包含所有节点
+# 节点注册
 # ===========================================
 NODE_CLASS_MAPPINGS = {
     "WanAdvancedI2V": WanAdvancedI2V,
     "WanAdvancedExtractLastFrames": WanAdvancedExtractLastFrames,
     "WanAdvancedExtractLastImages": WanAdvancedExtractLastImages,
-    "WanSVIControlPanel": WanSVIControlPanel,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanAdvancedI2V": "Wan Advanced I2V (Ultimate)",
     "WanAdvancedExtractLastFrames": "Wan Extract Last Frames (Latent)",
     "WanAdvancedExtractLastImages": "Wan Extract Last Images",
-    "WanSVIControlPanel": "Wan SVI Control Panel",
 }
