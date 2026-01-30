@@ -12,7 +12,7 @@
 
 增加start image的强度可以削弱动态
 
-///////////////////////
+\\\\\\\\\\\\\\\\\\\\\
  
 1/30测试：
 
@@ -26,7 +26,7 @@
 
 <img width="381" height="820" alt="image" src="https://github.com/user-attachments/assets/b935d99c-9189-4520-bc3f-49cbceaed62a" /><img width="363" height="197" alt="image" src="https://github.com/user-attachments/assets/cd6f1102-1af5-4005-9375-6d068146befb" />
 
-
+\\\\\\\\\\\\\\\\\\\\\\\\
 
 # 下面为原版fmlf的readme：
 > Multi-frame reference conditioning nodes for Wan2.2 A14B I2V models.
