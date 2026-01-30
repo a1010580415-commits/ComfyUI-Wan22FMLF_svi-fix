@@ -1,5 +1,7 @@
 # ComfyUI-Wan22FMLF-svi-fix
 
+代码为ai融合
+
 对比原版，修复了svi模式下拼接方向问题和svi支持的完整性问题
 
 引入三个参考帧开关和svi_motion_strength来控制传递的动态强度，可以实现非常夸张或者非常稳定的动态效果
