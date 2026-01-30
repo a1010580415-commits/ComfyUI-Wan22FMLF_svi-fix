@@ -12,6 +12,19 @@
 
 增加start image的强度可以削弱动态
 
+1/30测试：
+原版作者虽然已经融入修复拼接问题，但是动态没做好，具体原因未知
+
+在修复前建议继续使用svi fix版本
+
+此版本除了高分辨率（720p以上）下会表现不稳定没什么问题
+
+推荐参数
+
+<img width="381" height="820" alt="image" src="https://github.com/user-attachments/assets/b935d99c-9189-4520-bc3f-49cbceaed62a" /><img width="363" height="197" alt="image" src="https://github.com/user-attachments/assets/cd6f1102-1af5-4005-9375-6d068146befb" />
+
+
+
 # 下面为原版fmlf的readme：
 > Multi-frame reference conditioning nodes for Wan2.2 A14B I2V models.
 
