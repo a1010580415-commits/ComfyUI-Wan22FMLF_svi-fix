@@ -26,7 +26,9 @@
 
 推荐参数
 
-<img width="381" height="820" alt="image" src="https://github.com/user-attachments/assets/b935d99c-9189-4520-bc3f-49cbceaed62a" /><img width="363" height="197" alt="image" src="https://github.com/user-attachments/assets/cd6f1102-1af5-4005-9375-6d068146befb" />
+<img width="508" height="1037" alt="image" src="https://github.com/user-attachments/assets/271d60d2-b0f6-485e-9d5c-7608432c47eb" /><img width="481" height="282" alt="image" src="https://github.com/user-attachments/assets/1adaba1c-9594-4121-877d-4eb3ef35bfe0" />
+
+
 
 \\\\\\\\\\\\\\\\\\\\\\\\
 
