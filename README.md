@@ -1,8 +1,43 @@
 # ComfyUI-Wan22FMLF_svi-fix
 
+#### 接口介绍：
+
+融合了fmlf和svipro原版的接口
+
+svi： anchor samples 锚点帧 prev latent 上一段视频
+
+fmlf： start image，middle image，end image 首尾中间帧优先级低于svi，具体取决于设定的权重
+
+有prev latent的情况下start image基本没作用
+
+#### 参数介绍：
+
+motion influence ：用于控制传递下来的动态权重，默认1  （为了保持动态：低分辨率建议调高，高分辨率建议调低）
+
+overlap frames : 提供给motion inluence的图像帧数量（=latent帧x4）
+
+motion boost ：提高动态，增加动作幅度。 `原理：计算连续帧之间的差异，放大运动向量`
+
+detail boost ：提高速度和细节，但是可能会让画面不稳定。 `原理：在创建掩码和条件时，调整衰减率和使用的帧数
+
+正常搭配：仅增强svi原本效果
+
+`` motion influence 1-2 / overlap frames 4 / motion boost 1 / detail boost 0.5 ``
+
+极端搭配(开头或结尾会有4帧闪烁）：
+
+搭配1：高传递高动态，motion influence 2 overlap frames 16 motion boost 2 detail boost 1 ， 视频17帧重叠可无缝
+
+
+搭配2：低传递高动态，motion influence 0.7 overlap frames 4 motion boost 2 detail boost 2  视频5帧重叠可无缝
+
+具体使用方式，请见svipro boost工作流示例
+
 ## 📝 更新日志 (svi-fix)
-### 2025-03-04 SVI advance节点修复开头结尾闪烁
+### 2025-03-04 SVI advance修复开头结尾闪烁，更新推荐搭配（见下方）
+
 现在只需要保持两种boost范围在1.5以内则不会闪烁
+
 
 ### 2025-03-03 SVI advance节点完善
 
@@ -21,22 +56,7 @@
 
 （附示例工作流截图)
 
-#### 新参数：
 
-motion influence ：用于控制传递下来的动态权重，默认1  （为了保持动态：低分辨率建议调高，高分辨率建议调低）
-
-overlap frames : 提供给motion inluence的图像帧数量（=latent帧x4）
-
-motion boost ：提高动态，增加动作幅度。 `原理：计算连续帧之间的差异，放大运动向量`
-
-detail boost ：提高速度和细节，但是可能会让画面不稳定。 `原理：在创建掩码和条件时，调整衰减率和使用的帧数`
-
-搭配1：高传递高动态，motion influence 2 overlap frames 16 motion boost 1 detail boost 0.5 ， 视频17帧重叠可无缝
-
-
-搭配2：低传递高动态，motion influence 0.7 overlap frames 4 motion boost 2.5 detail boost 3.0  视频5帧重叠可无缝
-
-具体使用方式，请见svipro boost工作流示例
 ---
 
 
