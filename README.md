@@ -1,6 +1,9 @@
 # ComfyUI-Wan22FMLF_svi-fix
 
 ## 📝 更新日志 (svi-fix)
+### 2025-03-04 SVI advance节点修复开头结尾闪烁
+现在只需要保持两种boost范围在1.5以内则不会闪烁
+
 ### 2025-03-03 SVI advance节点完善
 
 将svi pro原版的anchor sample从start image中分离出来，便于锁定参考人物
