@@ -14,7 +14,7 @@ fmlf： start image，middle image，end image 首尾中间帧优先级低于svi
 
 motion influence ：用于控制传递下来的动态权重，默认1  （为了保持动态：低分辨率建议调高，高分辨率建议调低）
 
-overlap frames : 提供给motion inluence的图像帧数量（=latent帧x4）
+overlap frames : 提供给motion inluence的图像帧数量，内部会换算为latent帧处理（实际输入除4）
 
 motion boost ：提高动态，增加动作幅度。 `原理：计算连续帧之间的差异，放大运动向量`
 
