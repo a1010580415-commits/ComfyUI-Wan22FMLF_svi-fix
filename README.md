@@ -34,7 +34,7 @@ detail boost ：提高速度和细节，但是可能会让画面不稳定。 原
 具体使用方式，请见svipro boost工作流示例
 
 ## 📝 更新日志 (svi-fix)
-### 2025-03-04 SVI advance修复开头结尾闪烁，更新推荐搭配参数
+### 2025-03-05 SVI advance修复开头结尾闪烁，更新推荐搭配参数与示例工作流
 
 解决首尾乱闪烁的问题，但是在boost开的太高的情况下（>2)依旧会闪
 
@@ -54,7 +54,8 @@ detail boost ：提高速度和细节，但是可能会让画面不稳定。 原
 用于解决如下问题：高分辨率下svi动态削弱，拼接处跳帧，以及界面整洁度
 
 #### 测试结论：在示例工作流的参数下，1920x1080的分辨率也可以保持住动态。
-<img width="13031" height="4457" alt="workflow (82)" src="https://github.com/user-attachments/assets/73ce87c5-9d49-4c04-a021-5cda89e7010f" />
+<img width="13431" height="4235" alt="workflow - 2026-03-05T123459 491" src="https://github.com/user-attachments/assets/c5560d54-87a5-4736-8bbb-78a5a8125e13" />
+
 
 （附示例工作流截图)
 
