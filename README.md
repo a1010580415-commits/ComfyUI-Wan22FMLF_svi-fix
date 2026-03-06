@@ -34,6 +34,8 @@ detail boost ：提高速度和细节，但是可能会让画面不稳定。 原
 
 `` motion influence 1-2 / overlap frames 4 / motion boost 1-1.5 / detail boost 1-1.5 ``
 
+###### 所有首尾帧的强度不要高于0.5!
+
 极端搭配(开头或结尾会有4帧闪烁）：
 
 搭配1：高传递高动态，motion influence 2 overlap frames 16 motion boost 2 detail boost 1 ， 视频17帧重叠可无缝
