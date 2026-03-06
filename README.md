@@ -14,9 +14,9 @@ https://github.com/user-attachments/assets/dc1cf2a4-3c6a-4210-a247-e53c2423f776
 
 融合了fmlf和svipro原版的接口
 
-svi： anchor samples 锚点帧 prev latent 上一段视频
+· svi接口： anchor samples 锚点帧 prev latent 上一段视频
 
-fmlf： start image，middle image，end image 首尾中间帧优先级低于svi，具体取决于设定的权重
+· fmlf接口： start image，middle image，end image 首尾中间帧优先级低于svi，具体取决于设定的权重
 
 有prev latent的情况下start image基本没作用
 
