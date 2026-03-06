@@ -22,7 +22,7 @@ fmlf： start image，middle image，end image 首尾中间帧优先级低于svi
 
 #### 参数介绍：
 
-motion influence ：用于控制传递下来的动态权重，默认1  （为了保持动态：低分辨率建议调高，高分辨率建议调低）
+motion influence ：用于控制传递下来的动态权重，如果太大或者太小都会让拼接不自然，默认1  （为了保持动态：低分辨率建议调高，高分辨率建议调低）
 
 overlap frames : 提供给motion inluence的图像帧数量，内部会换算为latent帧处理（实际输入除4）
 
