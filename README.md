@@ -1,8 +1,10 @@
 # ComfyUI-Wan22FMLF_svi-fix （svi boost）
 
-#### 四合一长视频工作流演示(上为对口型演示|下为直出自由帧控制演示| 合唱不支持对口型所以画面炸了..）
+#### 四合一长视频工作流演示(上为对口型演示|下为直出自由帧控制演示|）
 
 https://github.com/user-attachments/assets/dc1cf2a4-3c6a-4210-a247-e53c2423f776
+
+`合唱不支持对口型所以画面炸了..别和我一样搞这种人数变化大的`
 
 此工作流融合了svipro boost视频延长+fmlf自由帧控制+vbvr物理+infinitalk对口型（painter av2v）
 
