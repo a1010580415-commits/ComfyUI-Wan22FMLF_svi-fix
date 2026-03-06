@@ -4,6 +4,9 @@
 
 https://github.com/user-attachments/assets/dc1cf2a4-3c6a-4210-a247-e53c2423f776
 
+此工作流融合了svipro boost视频延长+fmlf自由帧控制+vbvr物理+infinitalk对口型（painter av2v）
+
+满足wan2.2高度定制且一次直出长视频的需求
 
 #### 接口介绍：
 
