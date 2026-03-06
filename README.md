@@ -1,6 +1,6 @@
 # ComfyUI-Wan22FMLF_svi-fix （svi boost）
 
-#### 四合一长视频工作流演示(24fps 720p 403帧|上为对口型演示|下为直出自由帧控制演示|）
+#### 四合一长视频工作流演示(24fps 720p 403帧|上为对口型|下为直出无口型|）
 
 https://github.com/user-attachments/assets/dc1cf2a4-3c6a-4210-a247-e53c2423f776
 
