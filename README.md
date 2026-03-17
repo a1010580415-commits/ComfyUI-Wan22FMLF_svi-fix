@@ -1,492 +1,191 @@
-# ComfyUI-Wan22FMLF_svi-fix （svi boost）
+# ComfyUI-Wan22FMLF_svi-fix (SVI Boost)
 
-#### 四合一长视频工作流演示(24fps 720p 403帧|上为对口型|下为直出无口型|）
+> Multi-frame reference conditioning nodes for Wan2.2 A14B I2V models, with enhanced SVI (Stable Video Infinity) seamless continuation.
+
+This fork adds the **SVI Pro Advanced** node on top of [wallen0322/ComfyUI-Wan22FMLF](https://github.com/wallen0322/ComfyUI-Wan22FMLF), fixing high-resolution motion loss, splice jumping, and adding boost controls for motion and detail.
+
+---
+
+## 4-in-1 Long Video Demo (24fps 720p, 403 frames)
+
+Top: with lip sync | Bottom: without lip sync
 
 https://github.com/user-attachments/assets/dc1cf2a4-3c6a-4210-a247-e53c2423f776
 
-两段161帧+一段81帧，每段变化都由中间帧和提示词控制，最后再统一进行对口型
+Two segments of 161 frames + one segment of 81 frames. Each segment's variation is controlled by the middle frame and prompt. Lip sync is applied uniformly at the end.
 
-`合唱不支持对口型所以画面炸了..别和我一样搞这种人数变化大的`
+> Chorus scenes don't support lip sync well — avoid scenes with large changes in the number of people.
 
-###### 此示例工作流融合了svipro boost视频延长+fmlf自由帧控制+vbvr物理+infinitalk对口型（painter av2v），满足wan2.2高度定制且一次直出长视频的需求 ，文件在example workflow中
-
-  
-
-#### 接口介绍：
-
-融合了fmlf和svipro原版的接口
-
-· svi接口： anchor samples 锚点帧 prev latent 上一段视频
-
-· fmlf接口： start image，middle image，end image 首尾中间帧 | 优先级低于anchor samples，具体取决于设定的权重
-
-有prev latent的情况下start image基本没作用
-
-#### 参数介绍：
-
-· motion influence ：用于控制传递下来的动态权重，如果太大或者太小都会让拼接不自然，默认1  （为了保持动态：低分辨率建议调高，高分辨率建议调低）
-
-· overlap frames : 提供给motion inluence的图像帧数量，内部会换算为latent帧处理（实际输入除4）
-
-· motion boost ：提高动态，增加动作幅度。 `原理：计算连续帧之间的差异，放大运动向量`
-
-· detail boost ：提高速度和细节，但是可能会让画面不稳定。 原理：在创建掩码和条件时，调整衰减率和使用的帧数
-
-##### 正常搭配：仅增强svi原本效果
-
-`` motion influence 1-1.3 / overlap frames 4 / motion boost 1-1.5 / detail boost 1-1.5 ``
-
-###### 所有首尾帧的强度不要高于0.5!会发灰！
-
-##### 极端搭配：(开头或结尾会有4帧闪烁）（拼接处可能会不自然）
-
-搭配1：高传递高动态，motion influence 2 overlap frames 16 motion boost 2 detail boost 1 ， 视频17帧重叠可无缝
-
-
-搭配2：低传递高动态，motion influence 0.7 overlap frames 4 motion boost 2 detail boost 2  视频5帧重叠可无缝
-
-具体使用方式，请见svipro boost工作流示例
-
-## 📝 更新日志 (svi-fix)
-### 2025-03-06 新增缝合wan2.2全部生态的四合一示例工作流（额外需要painter nodes）
-
-
-### 2025-03-05 SVI advance修复开头结尾闪烁，更新推荐搭配参数与示例工作流
-
-解决首尾乱闪烁的问题，但是在boost开的太高的情况下（>2)依旧会闪
-
-
-### 2025-03-03 SVI advance节点完善
-
-将svi pro原版的anchor sample从start image中分离出来，便于锁定参考人物
-
-现在可直接通过关闭boost去实现原版svipro的功能
-
-此版本开始着力于把底座更换为原版svipro
-
-### 2025-02-01 SVI 新增节点
-
-新增svipro专用节点wan_svi_pro_advanced.py
-
-用于解决如下问题：高分辨率下svi动态削弱，拼接处跳帧，以及界面整洁度
-
-#### 测试结论：在示例工作流的参数下，1920x1080的分辨率也可以保持住动态。
-<img width="13431" height="4235" alt="workflow - 2026-03-05T123459 491" src="https://github.com/user-attachments/assets/c5560d54-87a5-4736-8bbb-78a5a8125e13" />
-
-
-（附示例工作流截图)
-
+This example workflow combines: SVI Pro Boost video extension + FMLF free frame control + VBVR physics LoRA + InfiniTalk lip sync (Painter AV2V). The workflow file is in `example_workflows/`.
 
 ---
 
+## SVI Pro Advanced Node
 
-> Multi-frame reference conditioning nodes for Wan2.2 A14B I2V models.
+### Inputs
 
-一个为 Wan2.2 A14B I2V 模型提供多帧参考条件控制的 ComfyUI 自定义节点集合。
+The node merges FMLF and SVI Pro interfaces:
 
----
+- **SVI inputs:** `anchor_samples` (anchor latent), `prev_latent` (previous video segment)
+- **FMLF inputs:** `start_image`, `middle_image`, `end_image` (reference frames — lower priority than `anchor_samples`, weight-dependent)
 
-## 📋 目录
+When `prev_latent` is connected, `start_image` has minimal effect.
 
-- [更新日志](#更新日志)
-- [快速开始](#快速开始)
-- [节点说明](#节点说明)
-- [参数配置](#参数配置)
-- [使用建议](#使用建议)
-- [常见问题](#常见问题)
+### Parameters
 
----
+| Parameter | Default | Range | Description |
+|-----------|---------|-------|-------------|
+| `motion_influence` | 1.0 | 0.0 - 2.0 | Motion transfer weight from previous segment. Too high or too low makes splices unnatural. Low-res: increase. High-res: decrease. |
+| `overlap_frames` | 4 | 0 - 128 | Number of pixel frames fed to motion influence (internally divided by 4 for latent frames). Set to 0 to disable overlap. |
+| `motion_boost` | 1.0 | 1.0 - 3.0 | Amplifies motion by scaling frame-to-frame differences in the motion latent. |
+| `detail_boost` | 1.0 | 1.0 - 4.0 | Increases motion dynamics by adjusting the mask decay rate and scaling how many frames are pulled from prev_latent. Higher values = faster decay = more freedom for the model. |
 
-## 📝 更新日志
+### Recommended Presets
 
-### 2025-01-27 SVI 模式增强
-
-- ✅ **修复 SVI 模式 mask 维度问题**
-  - 修复 `concat_mask` 维度从 `(1, 1, T, H, W)` 到 `(1, 4, T, H, W)`
-  - 与 non-SVI 模式格式保持一致，解决拼接方向错误
-
-- ✅ **新增 `svi_motion_strength` 参数**
-  - 控制 SVI 模式下的动态传递强度
-  - 参数范围：0.0-2.0，默认 1.0
-  - `<1.0` = 更稳定的效果，`>1.0` = 更夸张的动态效果
-
-- ✅ **新增三个参考帧开关**
-  - `enable_start_frame`：控制是否启用起始帧参考
-  - `enable_middle_frame`：控制是否启用中间帧参考（已有）
-  - `enable_end_frame`：控制是否启用结束帧参考
-
-**感谢**：[@a1010580415-commits](https://github.com/a1010580415-commits) 在 [PR #29](https://github.com/wallen0322/ComfyUI-Wan22FMLF/pull/29) 中的贡献和建议
-
----
-
-### SVI PRO - 连续性优化
-
-**SVI 项目地址**：https://github.com/vita-epfl/Stable-Video-Infinity
-
-**SVI 模式第二次采样逻辑优化**
-- ✅ `motion_frames`（上一次采样的最后一帧）现在直接注入到 latent 的第一帧，确保帧间连续性
-- ✅ `start_image` 作为 concat image 注入条件，提供视觉引导
-- ✅ 优化了低噪声阶段的处理逻辑
-
-**技术变更**：
-- 第二次采样时：`motion_frames` 的第一帧编码后注入 `latent` 的第一帧（不注入条件）
-- `start_image` 作为 concat image 注入条件
-- 优化了 `image_low` 的处理，确保低噪声阶段一致性
-
-**修复问题**：
-- 修复多次采样时帧间不连续的问题
-- 优化 latent 和条件注入的时机
-
----
-
-### 最新更新 - 高性能图片选择节点
-
-- ✅ **重大性能优化**：改用服务器文件存储，不再在前端存储 base64 数据
-  - 避免 LocalStorage 配额限制（QuotaExceededError）
-  - 大幅减少工作流文件大小
-  - 提升节点加载和响应速度
-- ✅ 使用 ComfyUI 标准 `/upload/image` 和 `/view` 接口
-- ✅ 修复图片排序功能，支持手动排序
-- ✅ 优化代码结构，提升稳定性
-
----
-
-### 运动增强功能
-
-- ✅ **新增 `structural_repulsion_boost` 参数**
-  - 通过空间梯度条件注入增强运动效果
-  - **仅影响高噪阶段**，保护低噪阶段的颜色稳定性
-  - 参数范围：1.0-2.0，默认 1.0（无增强）
-  - 推荐值：1.2-1.5 可获得明显效果
-  
-**工作原理：**
-- 在相邻参考帧之间创建空间梯度
-- 运动区域的 mask 值降低，增强 `concat_latent_image` 的影响
-- 自动保护参考帧附近的区域，避免颜色和亮度偏移
-- 适用于所有多帧参考节点
-
-**使用建议：**
-- 默认值 1.0 = 不应用增强
-- 1.2-1.3 = 轻微增强，适合大多数场景
-- 1.4-1.5 = 中等增强，适合需要明显动态的场景
-- 1.6-2.0 = 强烈增强，注意可能影响颜色稳定性
-
----
-
-### 2025-10-31 重大更新
-
-- ✅ **解决中间帧闪烁问题**
-- ✅ 节点做了较大改变，请使用更新的示例工作流
-- ✅ 建议参数：
-  - 高噪中间帧强度：0.6-0.8
-  - 低噪中间帧强度：0.2 左右
-  - 复杂场景，低噪中间帧可直接设置为 0
-
----
-
-## 🚀 快速开始
-
-### 系统要求
-
-- 尽量使用**官方模型**，不要使用量化模型
-- 新增**单人模式**可有效杜绝颜色累积和亮度闪烁
-
-### 推荐分辨率
-
-#### 低分辨率推荐
-- `480×832`
-- `832×480`
-- `576×1024`
-
-#### 高分辨率推荐
-- `704×1280`
-- `1280×704`
-
-⚠️ **注意**：`720×1280` 会导致中间帧闪烁问题，不推荐使用。
-
----
-
-## 🎬 节点说明
-
-### 1. Wan First-Middle-Last Frame 🎬
-
-生成带有 3 帧参考的视频：起始帧、中间帧和结束帧。
-
-**参数说明：**
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `positive` | CONDITIONING | **必需** | 正向提示词条件 |
-| `negative` | CONDITIONING | **必需** | 负向提示词条件 |
-| `vae` | VAE | **必需** | 用于编码的 VAE 模型 |
-| `width` | INT | 832 | 视频宽度（16 的倍数） |
-| `height` | INT | 480 | 视频高度（16 的倍数） |
-| `length` | INT | 81 | 总帧数（4 的倍数 + 1） |
-| `batch_size` | INT | 1 | 生成视频的数量 |
-| `start_image` | IMAGE | 可选 | 起始帧参考图 |
-| `middle_image` | IMAGE | 可选 | 中间帧参考图 |
-| `end_image` | IMAGE | 可选 | 结束帧参考图 |
-| `middle_frame_ratio` | FLOAT | 0.5 | 中间帧位置比例（0.0-1.0） |
-| `high_noise_mid_strength` | FLOAT | 0.8 | 高噪中间帧约束强度（0=宽松，1=严格） |
-| `low_noise_start_strength` | FLOAT | 1.0 | 低噪起始帧约束强度 |
-| `low_noise_mid_strength` | FLOAT | 0.2 | 低噪中间帧约束强度 |
-| `low_noise_end_strength` | FLOAT | 1.0 | 低噪结束帧约束强度 |
-| `structural_repulsion_boost` | FLOAT | 1.0 | 运动增强系数（1.0-2.0），仅影响高噪阶段 |
-| `clip_vision_start_image` | CLIP_VISION_OUTPUT | 可选 | 起始帧的 CLIP Vision 输出 |
-| `clip_vision_middle_image` | CLIP_VISION_OUTPUT | 可选 | 中间帧的 CLIP Vision 输出 |
-| `clip_vision_end_image` | CLIP_VISION_OUTPUT | 可选 | 结束帧的 CLIP Vision 输出 |
-
----
-
-### 2. Wan Multi-Frame Reference 🎞️
-
-支持 2、3、4 或更多参考帧的通用多帧参考节点，具有灵活的位置配置。
-
-**参数说明：**
-
-| 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `positive` | CONDITIONING | **必需** | 正向提示词条件 |
-| `negative` | CONDITIONING | **必需** | 负向提示词条件 |
-| `vae` | VAE | **必需** | 用于编码的 VAE 模型 |
-| `width` | INT | 832 | 视频宽度（16 的倍数） |
-| `height` | INT | 480 | 视频高度（16 的倍数） |
-| `length` | INT | 81 | 总帧数（4 的倍数 + 1） |
-| `batch_size` | INT | 1 | 生成视频的数量 |
-| `ref_images` | IMAGE | **必需** | 参考帧图片 |
-| `ref_positions` | STRING | `""` (自动) | 帧位置：`"0,40,80"` 或 `"0,0.5,1.0"` |
-| `ref_strength` | FLOAT | 0.5 | 中间帧约束强度（0-1） |
-| `fade_frames` | INT | 2 | 淡出渐变帧数（0-8） |
-| `clip_vision_output` | CLIP_VISION_OUTPUT | 可选 | CLIP Vision 输出 |
-
----
-
-## ⚙️ 参数配置
-
-### `ref_positions` 参数使用说明
-
-`ref_positions` 用于指定参考帧在视频中的位置，支持多种格式。
-
-#### 格式说明
-
-##### 1️⃣ 留空（自动分布）⭐ 推荐
+**Standard (enhanced SVI defaults):**
 
 ```
-ref_positions: ""
+motion_influence: 1.0-1.3 | overlap_frames: 4 | motion_boost: 1.0-1.5 | detail_boost: 1.0-1.5
 ```
 
-- **效果**：参考帧在视频中均匀分布
-- **示例**：
-  - 3 张图片，length=81 → 位置：0, 40, 80
-  - 6 张图片，length=81 → 位置：0, 16, 32, 48, 64, 80
+> Keep all start/end frame strengths below 0.5 — higher values cause gray-out artifacts.
+
+**Aggressive (may cause 4-frame flicker at start/end, splices may be less smooth):**
+
+| Preset | motion_influence | overlap_frames | motion_boost | detail_boost | Seamless overlap |
+|--------|-----------------|----------------|--------------|--------------|-----------------|
+| High transfer + high motion | 2.0 | 16 | 2.0 | 1.0 | 17 frames |
+| Low transfer + high motion | 0.7 | 4 | 2.0 | 2.0 | 5 frames |
+
+See the SVI Pro Boost example workflow for detailed usage.
 
 ---
 
-##### 2️⃣ 比例值（推荐）
+## Other Nodes
 
-```
-ref_positions: "0, 0.2, 0.5, 0.8, 1.0"
-```
+### Wan First-Middle-Last Frame
 
-- **范围**：0.0 - 1.0（0% 到 100%）
-- **效果**：按视频长度的比例定位
-- **计算**：`实际位置 = 比例 × (length - 1)`
-- **示例**（length=81 时）：
-  - `0.0` → 帧 0
-  - `0.5` → 帧 40
-  - `1.0` → 帧 80
+Generates video with 3 reference frames: start, middle, and end.
 
----
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `positive` | CONDITIONING | **required** | Positive prompt conditioning |
+| `negative` | CONDITIONING | **required** | Negative prompt conditioning |
+| `vae` | VAE | **required** | VAE model for encoding |
+| `width` | INT | 832 | Video width (multiple of 16) |
+| `height` | INT | 480 | Video height (multiple of 16) |
+| `length` | INT | 81 | Total frames (multiple of 4 + 1) |
+| `batch_size` | INT | 1 | Number of videos to generate |
+| `start_image` | IMAGE | optional | Start frame reference |
+| `middle_image` | IMAGE | optional | Middle frame reference |
+| `end_image` | IMAGE | optional | End frame reference |
+| `middle_frame_ratio` | FLOAT | 0.5 | Middle frame position (0.0 - 1.0) |
+| `high_noise_mid_strength` | FLOAT | 0.8 | High-noise middle frame strength (0 = loose, 1 = strict) |
+| `low_noise_start_strength` | FLOAT | 1.0 | Low-noise start frame strength |
+| `low_noise_mid_strength` | FLOAT | 0.2 | Low-noise middle frame strength |
+| `low_noise_end_strength` | FLOAT | 1.0 | Low-noise end frame strength |
+| `structural_repulsion_boost` | FLOAT | 1.0 | Motion enhancement (1.0 - 2.0), affects high-noise stage only |
+| `clip_vision_*` | CLIP_VISION_OUTPUT | optional | CLIP Vision embeddings for start/middle/end frames |
 
-##### 3️⃣ 绝对帧索引
+### Wan Multi-Frame Reference
 
-```
-ref_positions: "0, 20, 40, 60, 80"
-```
+General-purpose multi-frame reference node supporting 2, 3, 4, or more reference frames with flexible positioning.
 
-- **范围**：大于等于 2 的整数
-- **效果**：直接指定帧位置
-- **注意**：超出范围会自动裁剪到 `[0, length-1]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ref_images` | IMAGE | **required** | Reference frame images |
+| `ref_positions` | STRING | `""` (auto) | Frame positions: `"0,40,80"`, `"0,0.5,1.0"`, or empty for auto-distribute |
+| `ref_strength` | FLOAT | 0.5 | Middle frame constraint strength (0 - 1) |
+| `fade_frames` | INT | 2 | Fade-out transition frames (0 - 8) |
+| `clip_vision_output` | CLIP_VISION_OUTPUT | optional | CLIP Vision output |
 
----
+#### `ref_positions` Format
 
-##### 4️⃣ JSON 数组格式
+- **Empty string** (recommended): auto-distributes frames evenly. 3 images with length=81 gives positions 0, 40, 80.
+- **Ratio values** (0.0 - 1.0): `"0, 0.25, 0.5, 0.75, 1"` — positions as percentage of video length.
+- **Absolute indices** (>= 2): `"0, 20, 40, 60, 80"` — direct frame positions, auto-clipped to valid range.
+- **JSON array**: `"[0, 0.25, 0.5, 60, 1.0]"` — mix of ratios and absolutes.
 
-```
-ref_positions: "[0, 0.25, 0.5, 0.75, 1.0]"
-```
-
-- **格式**：标准 JSON 数组
-- **支持**：比例值或绝对值混用
-- **示例**：`[0, 20, 0.5, 60, 1.0]`
-
----
-
-#### 实际应用示例
-
-##### 示例 1：3 帧视频（首-中-尾）
-
-```yaml
-length: 81
-ref_images: 3张图片
-ref_positions: ""           # → 自动分布到 0, 40, 80
-ref_positions: "0, 0.5, 1"  # → 精确定位到 0, 40, 80
-```
-
-##### 示例 2：5 帧视频
-
-```yaml
-length: 81
-ref_images: 5张图片
-ref_positions: "0, 0.25, 0.5, 0.75, 1"  # → 位置: 0, 20, 40, 60, 80
-```
-
-##### 示例 3：6 帧视频（自定义）
-
-```yaml
-length: 81
-ref_images: 6张图片
-ref_positions: "0, 10, 25, 45, 65, 80"          # → 绝对位置
-ref_positions: "0, 0.12, 0.31, 0.56, 0.81, 1"   # → 比例位置
-```
+All positions are automatically aligned to multiples of 4 (latent alignment). Adjacent frames maintain at least 4 frames of spacing.
 
 ---
 
-#### 重要提示
+## Quick Start
 
-##### 自动对齐
+### Requirements
 
-- 所有位置会自动对齐到 4 的倍数（latent 对齐）
-- **示例**：帧 15 → 对齐到帧 12
+- Use the **official model weights** — quantized models are not recommended
+- **Single-person mode** helps prevent color accumulation and brightness flickering
 
-##### 帧间距保护
+### Recommended Resolutions
 
-- 相邻帧自动保持至少 4 帧间距
-- **示例**：如果帧 16 和帧 18 冲突 → 自动调整为 16 和 20
+| Category | Resolutions |
+|----------|------------|
+| Low-res | 480x832, 832x480, 576x1024 |
+| High-res | 704x1280, 1280x704 |
 
-##### 数量匹配
+> **Warning:** 720x1280 causes middle-frame flickering — avoid this resolution.
 
-- 如果位置数量少于图片数量：重复最后一个位置
-- 如果位置数量多于图片数量：截断多余位置
+### Noise Strength Tips
 
----
+- **High-noise steps:** 2 steps is enough. More steps increase middle-frame flicker probability.
+- **Middle frame strength:** Normal scenes: high=0.6-0.8, low=0.2. Complex scenes: high=0.6-0.8, low=0.
 
-#### 推荐用法
+### Scene Tips
 
-**最简单** ⭐ 留空，让系统自动分布
-
-```
-ref_positions: ""
-```
-
-**最灵活** ⭐ 使用比例值（0-1）
-
-```
-ref_positions: "0, 0.33, 0.67, 1"
-```
-
-**最精确** ⭐ 使用绝对帧索引
-
-```
-ref_positions: "0, 20, 40, 60, 80"
-```
+- **High-variation scenes** (e.g. transformations): use normal mode, reduce LightX2V LoRA weight to ~0.6. Otherwise low-noise will suppress the transitions.
+- **Infinite long video with multi-image reference:** see the 3-image loop workflow with the visual image picker node.
 
 ---
 
-## 💡 使用建议
+## Example Workflows
 
-### 场景配置
+Available in `example_workflows/`:
 
-#### 差异较大的场景（如变身等）
+- `SVI pro boost.json` — SVI Pro Boost video extension
+- `四合一无限IA2V...json` — 4-in-1 workflow (SVI + FMLF + InfiniTalk + VBVR, requires Painter Nodes)
+- `Long video + segmented prompt words.json` — Long video with per-segment prompts
+- `Wan22FMLF-1109update.json` — Multi-frame reference base workflow
 
-如果场景变化较大，可以切换到 **normal 模式**，使用以下参数设置：
-
-- 使用 normal 模式
-- LightX2V 的 Lora 权重需要降低到 **0.6 左右**
-- 否则低噪会破坏你的变化效果
-
-![差异场景配置示例](https://github.com/user-attachments/assets/a2da0900-7439-4e57-a105-b6c772d5f6af)
+<img alt="Example workflow screenshot" src="https://github.com/user-attachments/assets/c5560d54-87a5-4736-8bbb-78a5a8125e13" />
 
 ---
 
-#### 无限续杯多图参考长视频
+## Changelog (svi-fix)
 
-推荐以下参数配置：
+### 2025-03-06
+- Added 4-in-1 example workflow combining the full Wan2.2 ecosystem (requires Painter Nodes)
 
-![长视频配置示例](https://github.com/user-attachments/assets/86a2aaed-efd5-4e11-9bca-0518f9239c8f)
+### 2025-03-05
+- Fixed start/end frame flickering in SVI Advanced. Still flickers when boost > 2.
+- Updated recommended parameter presets and example workflow.
 
-**✨ 更新**：3 图循环工作流，增加可视化选择图片的节点，不用再去建文件夹和改图片名字了，更新立刻享受！
+### 2025-03-03
+- Separated `anchor_samples` from `start_image` for better character locking.
+- Disabling boost now gives vanilla SVI Pro behavior.
+- Began rebasing onto upstream SVI Pro as the foundation.
 
-![可视化选择节点](https://github.com/user-attachments/assets/1e3665f4-a664-408e-a6b4-06ff9bfa0c8b)
+### 2025-02-01
+- Added `wan_svi_pro_advanced.py` node to fix: high-res motion loss, splice jumping, UI clutter.
+- Tested: 1920x1080 maintains motion dynamics with example workflow parameters.
 
----
+### 2025-01-27 (upstream)
+- Fixed SVI mask dimensions from `(1,1,T,H,W)` to `(1,4,T,H,W)`.
+- Added `svi_motion_strength` parameter (0.0 - 2.0, default 1.0).
+- Added per-frame enable toggles (`enable_start_frame`, `enable_middle_frame`, `enable_end_frame`).
 
-### 噪点强度建议
-
-#### 高噪设置
-
-- **步数**：2 步就够了
-- ⚠️ 高噪步数太多会增加中间帧闪烁的概率
-
-#### 中间帧强度建议
-
-| 场景类型 | 高噪中间帧强度 | 低噪中间帧强度 |
-|----------|---------------|---------------|
-| 普通场景 | 0.6-0.8 | 0.2 左右 |
-| 复杂场景 | 0.6-0.8 | 0（可直接设置为 0） |
-
----
-
-## ❓ 常见问题
-
-### 关于 `ref_positions` 参数
-
-**Q: 我有 6 张图片，怎么均匀分布？**
-
-A: 留空即可，或使用 `"0, 0.2, 0.4, 0.6, 0.8, 1"`
+### Earlier (upstream)
+- SVI Pro continuity optimization: `motion_frames` injected into latent first frame for inter-frame continuity.
+- High-performance image picker node: server-side file storage, no more LocalStorage quota errors.
+- Motion enhancement via `structural_repulsion_boost` (spatial gradient conditioning, high-noise stage only).
+- Fixed middle-frame flickering. Recommended: high_noise_mid=0.6-0.8, low_noise_mid=0.2.
 
 ---
 
-**Q: 比例值 0.5 和 1 有什么区别？**
+## Contributing
 
-A: 
-- `0.5` = 50% 位置 = 帧 40（length=81 时）
-- `1` 或 `1.0` = 100% 位置 = 帧 80（length=81 时）
+Issues and Pull Requests are welcome!
 
----
+## License
 
-**Q: 可以让某些帧更密集吗？**
-
-A: 可以，使用自定义位置：`"0, 10, 15, 20, 50, 80"`
-
----
-
-**Q: 位置会自动排序吗？**
-
-A: 不会，请按顺序输入位置值
-
----
-
-## 📚 示例工作流
-
-项目提供了多个示例工作流供参考：
-
-- `Long video + segmented prompt words.json` - 长视频 + 分段提示词
-- `Wan22FMLF-1109update.json` - 最新更新版本
-- `长视频-SVI-shot+三图（Long Video Service with Unlimited 3-Image Continuation）.json` - 长视频服务（无限 3 图续接）
-
----
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
----
-
-## 📄 许可证
-
-查看项目许可证文件以获取更多信息。
-
----
-
-**🎉 Don't worry, be happy!**
+See the project license file for details.
