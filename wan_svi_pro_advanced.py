@@ -35,69 +35,71 @@ class WanSVIProAdvancedI2V(io.ComfyNode):
                 io.Int.Input("batch_size", default=1, min=1, max=4096, display_mode=io.NumberDisplay.number,
                            tooltip="Number of videos to generate"),
 
-                # Start frame
+                # Frame images
                 io.Image.Input("start_image", optional=True,
                              tooltip="First frame reference image (anchor). Overrides anchor_samples if provided."),
-                io.ClipVisionOutput.Input("clip_vision_start_image", optional=True,
-                                        tooltip="CLIP vision embedding for start frame"),
-                io.Boolean.Input("enable_start_frame", default=True, optional=True,
-                               tooltip="Enable start frame conditioning"),
-                io.Float.Input("high_noise_start_strength", default=1.0, min=0.0, max=1.0, step=0.05, round=0.01,
-                             display_mode=io.NumberDisplay.slider, optional=True,
-                             tooltip="Conditioning strength for start frame in high-noise stage\n0.0 = ignore, 1.0 = fully conditioned"),
-                io.Float.Input("low_noise_start_strength", default=1.0, min=0.0, max=1.0, step=0.05, round=0.01,
-                             display_mode=io.NumberDisplay.slider, optional=True,
-                             tooltip="Conditioning strength for start frame in low-noise stage\n0.0 = ignore, 1.0 = fully conditioned"),
-
-                # Middle frame
                 io.Image.Input("middle_image", optional=True,
                              tooltip="Middle frame reference image for better temporal consistency"),
-                io.ClipVisionOutput.Input("clip_vision_middle_image", optional=True,
-                                        tooltip="CLIP vision embedding for middle frame"),
-                io.Boolean.Input("enable_middle_frame", default=True, optional=True,
-                               tooltip="Enable middle frame conditioning"),
+                io.Image.Input("end_image", optional=True,
+                             tooltip="Last frame reference image (target ending)"),
                 io.Float.Input("middle_frame_ratio", default=0.5, min=0.0, max=1.0, step=0.01, round=0.01,
                              display_mode=io.NumberDisplay.slider, optional=True,
                              tooltip="Temporal position of middle frame (0.0 = start, 1.0 = end)"),
+
+                # Conditioning strengths
+                io.Float.Input("high_noise_start_strength", default=1.0, min=0.0, max=1.0, step=0.05, round=0.01,
+                             display_mode=io.NumberDisplay.slider, optional=True,
+                             tooltip="Conditioning strength for start frame in high-noise stage\n0.0 = ignore, 1.0 = fully conditioned"),
                 io.Float.Input("high_noise_mid_strength", default=0.8, min=0.0, max=1.0, step=0.05, round=0.01,
                              display_mode=io.NumberDisplay.slider, optional=True,
                              tooltip="Conditioning strength for middle frame in high-noise stage\n0.0 = ignore, 1.0 = fully conditioned"),
+                io.Float.Input("low_noise_start_strength", default=1.0, min=0.0, max=1.0, step=0.05, round=0.01,
+                             display_mode=io.NumberDisplay.slider, optional=True,
+                             tooltip="Conditioning strength for start frame in low-noise stage\n0.0 = ignore, 1.0 = fully conditioned"),
                 io.Float.Input("low_noise_mid_strength", default=0.2, min=0.0, max=1.0, step=0.05, round=0.01,
                              display_mode=io.NumberDisplay.slider, optional=True,
                              tooltip="Conditioning strength for middle frame in low-noise stage\n0.0 = ignore, 1.0 = fully conditioned"),
-
-                # End frame
-                io.Image.Input("end_image", optional=True,
-                             tooltip="Last frame reference image (target ending)"),
-                io.ClipVisionOutput.Input("clip_vision_end_image", optional=True,
-                                        tooltip="CLIP vision embedding for end frame"),
-                io.Boolean.Input("enable_end_frame", default=True, optional=True,
-                               tooltip="Enable end frame conditioning"),
                 io.Float.Input("low_noise_end_strength", default=1.0, min=0.0, max=1.0, step=0.05, round=0.01,
                              display_mode=io.NumberDisplay.slider, optional=True,
                              tooltip="Conditioning strength for end frame in low-noise stage\n0.0 = ignore, 1.0 = fully conditioned"),
 
-                # Continuation (prev_latent)
+                # Enable toggles
+                io.Boolean.Input("enable_start_frame", default=True, optional=True,
+                               tooltip="Enable start frame conditioning"),
+                io.Boolean.Input("enable_middle_frame", default=True, optional=True,
+                               tooltip="Enable middle frame conditioning"),
+                io.Boolean.Input("enable_end_frame", default=True, optional=True,
+                               tooltip="Enable end frame conditioning"),
+
+                # Continuation
                 io.Latent.Input("prev_latent", optional=True,
                               tooltip="Previous video latent for seamless continuation"),
                 io.Latent.Input("anchor_samples", optional=True,
                               tooltip="Anchor latent samples (from VAE encode). Ignored if start_image is provided."),
                 io.Int.Input("overlap_frames", default=4, min=0, max=128, step=4, display_mode=io.NumberDisplay.number,
-                           tooltip="Number of overlapping pixel frames from prev_latent. 4 frames = 1 latent frame."),
+                           optional=True, tooltip="Number of overlapping pixel frames from prev_latent. 4 frames = 1 latent frame."),
                 io.Float.Input("motion_influence", default=1.0, min=0.0, max=2.0, step=0.05, round=0.01,
-                             display_mode=io.NumberDisplay.slider,
+                             display_mode=io.NumberDisplay.slider, optional=True,
                              tooltip="Overall strength of motion latent from prev_latent\n1.0 = normal, <1.0 = weaker, >1.0 = stronger"),
-
-                # Enhancement
                 io.Float.Input("motion_boost", default=1.0, min=0.5, max=3.0, step=0.1, round=0.1,
                              display_mode=io.NumberDisplay.slider, optional=True,
                              tooltip="Scale frame-to-frame motion differences in prev_latent\n<1.0 = dampen movement\n1.0 = no change\n>1.0 = amplify movement"),
                 io.Float.Input("detail_boost", default=1.0, min=0.5, max=4.0, step=0.1, round=0.1,
                              display_mode=io.NumberDisplay.slider, optional=True,
                              tooltip="Controls conditioning decay rate over motion frames\n<1.0 = slower decay, more conditioning retained\n1.0 = balanced\n>1.0 = faster decay, more dynamic freedom"),
+
+                # Enhancement
                 io.Float.Input("structural_repulsion_boost", default=1.0, min=1.0, max=2.0, step=0.05, round=0.01,
                              display_mode=io.NumberDisplay.slider, optional=True,
                              tooltip="Enhances motion between reference frames using spatial gradients\n1.0 = disabled, >1.0 = stronger repulsion in high-motion areas\nOnly affects high-noise stage"),
+
+                # CLIP vision (optional, not used by Wan 2.2 / SVI)
+                io.ClipVisionOutput.Input("clip_vision_start_image", optional=True,
+                                        tooltip="CLIP vision embedding for start frame (Wan 2.1 FLF only)"),
+                io.ClipVisionOutput.Input("clip_vision_middle_image", optional=True,
+                                        tooltip="CLIP vision embedding for middle frame (Wan 2.1 FLF only)"),
+                io.ClipVisionOutput.Input("clip_vision_end_image", optional=True,
+                                        tooltip="CLIP vision embedding for end frame (Wan 2.1 FLF only)"),
 
                 # Advanced
                 io.Int.Input("video_frame_offset", default=0, min=0, max=1000000, step=1, display_mode=io.NumberDisplay.number,
