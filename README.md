@@ -10,7 +10,7 @@ https://github.com/user-attachments/assets/dc1cf2a4-3c6a-4210-a247-e53c2423f776
 
 ###### 此示例工作流融合了svipro boost视频延长+fmlf自由帧控制+vbvr物理+infinitalk对口型（painter av2v），满足wan2.2高度定制且一次直出长视频的需求 ，文件在example workflow中
 
-#### Bug : 多帧参考会引起最后5帧闪烁，需要裁切掉!!!!!!!!!!!!!!!!!!
+#### Bug : 多帧输入会引起最后5帧闪烁，需要裁切掉!!!!!!!!!!!!!!!!!!
 
 #### 接口介绍：
 
