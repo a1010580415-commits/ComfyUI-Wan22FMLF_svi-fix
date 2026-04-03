@@ -187,8 +187,8 @@ class WanClipVisionOptions(io.ComfyNode):
 
 
 class WanI2VBase(io.ComfyNode):
-    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "CONDITIONING", "LATENT", "INT", "INT", "INT")
-    RETURN_NAMES = ("positive_high", "positive_low", "negative", "latent", "trim_latent", "trim_image", "next_offset")
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "CONDITIONING", "LATENT")
+    RETURN_NAMES = ("positive_high", "positive_low", "negative", "latent")
     CATEGORY = "ComfyUI-Wan22FMLF"
     FUNCTION = "execute"
     OUTPUT_NODE = False
@@ -243,9 +243,6 @@ class WanI2VBase(io.ComfyNode):
                 io.Conditioning.Output(display_name="positive_low"),
                 io.Conditioning.Output(display_name="negative"),
                 io.Latent.Output(display_name="latent"),
-                io.Int.Output(display_name="trim_latent"),
-                io.Int.Output(display_name="trim_image"),
-                io.Int.Output(display_name="next_offset"),
             ],
         )
 
@@ -276,7 +273,7 @@ class WanI2VBase(io.ComfyNode):
         clip_vision_end_image     = opts["clip_vision_end_image"]
 
         from .wan_advanced_i2v import WanAdvancedI2V
-        return WanAdvancedI2V.execute(
+        result = WanAdvancedI2V.execute(
             positive=positive, negative=negative, vae=vae,
             width=width, height=height, length=length, batch_size=batch_size,
             mode=mode,
@@ -301,3 +298,5 @@ class WanI2VBase(io.ComfyNode):
             svi_motion_strength=svi_motion_strength,
             prev_latent=prev_latent,
         )
+        positive_high, positive_low, negative_out, latent = result.result[:4]
+        return io.NodeOutput(positive_high, positive_low, negative_out, latent)
