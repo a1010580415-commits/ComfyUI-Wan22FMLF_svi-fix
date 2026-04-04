@@ -4,7 +4,7 @@ import node_helpers
 import comfy
 import comfy.utils
 import comfy.latent_formats
-from .utils import merge_clip_vision_outputs, create_spatial_gradient
+from .utils import merge_clip_vision_outputs, apply_repulsion_boost
 
 
 class WanSVIProAdvancedI2V(io.ComfyNode):
@@ -305,40 +305,17 @@ class WanSVIProAdvancedI2V(io.ComfyNode):
             mask_high[:, :, total_latents - 1:total_latents] = 0.0
             mask_low[:, :, total_latents - 1:total_latents] = max(0.0, 1.0 - low_noise_end_strength)
 
-        # --- Structural repulsion boost (spatial gradient conditioning) ---
+        # --- Structural repulsion boost ---
         if structural_repulsion_boost > 1.001 and total_latents > 1:
-            boost_factor = structural_repulsion_boost - 1.0
-
-            # Collect valid reference frames as (resized_image, latent_index) tuples
-            ref_frames = []
+            ref_indices = []
             if enable_start_frame and start_image is not None:
-                ref_img = comfy.utils.common_upscale(
-                    start_image[:1].movedim(-1, 1), width, height, "bilinear", "center"
-                ).movedim(1, -1)
-                ref_frames.append((ref_img, 0))
+                ref_indices.append(0)
             if img_mid is not None and enable_middle_frame and actual_middle_idx < total_latents:
-                ref_frames.append((img_mid, actual_middle_idx))
+                ref_indices.append(actual_middle_idx)
             if img_end is not None and enable_end_frame:
-                ref_frames.append((img_end, total_latents - 1))
-
-            for i in range(len(ref_frames) - 1):
-                img1, pos1 = ref_frames[i]
-                img2, pos2 = ref_frames[i + 1]
-
-                if pos2 > pos1 + 1:
-                    spatial_gradient = create_spatial_gradient(
-                        img1[0:1].to(device), img2[0:1].to(device), H, W, boost_factor
-                    )
-
-                    if spatial_gradient is not None:
-                        # Apply to transition zone, protecting 1 latent frame around each reference
-                        start_end = pos1 + 1
-                        protect_start = pos2 - 1
-                        transition_end = min(protect_start, pos2)
-
-                        for frame_idx in range(start_end, transition_end):
-                            current_mask = mask_high[:, :, frame_idx, :, :]
-                            mask_high[:, :, frame_idx, :, :] = current_mask * spatial_gradient
+                ref_indices.append(total_latents - 1)
+            if len(ref_indices) >= 2:
+                image_cond_latent = apply_repulsion_boost(image_cond_latent, ref_indices, structural_repulsion_boost)
 
         # --- Build conditioning ---
         positive_high = node_helpers.conditioning_set_values(positive, {

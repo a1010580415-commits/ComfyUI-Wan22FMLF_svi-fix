@@ -4,7 +4,7 @@ import node_helpers
 import comfy
 import comfy.utils
 import comfy.latent_formats
-from .utils import merge_clip_vision_outputs, create_spatial_gradient
+from .utils import merge_clip_vision_outputs, apply_repulsion_boost
 
 _WAN_I2V_OPTIONS = io.Custom("WAN_I2V_OPTIONS")
 
@@ -499,28 +499,15 @@ class WanI2VBase(io.ComfyNode):
             concat_latent_image = vae.encode(image[:, :, :, :3])
 
         if structural_repulsion_boost > 1.001 and length > 4:
-            mask_h2, mask_w2 = mask_high_noise.shape[-2], mask_high_noise.shape[-1]
-            boost_factor = structural_repulsion_boost - 1.0
-
-            if start_image is not None and middle_image is not None and enable_middle_frame:
-                g1 = create_spatial_gradient(start_image[0:1].to(device), middle_image[0:1].to(device), mask_h2, mask_w2, boost_factor)
-                if g1 is not None:
-                    s_end = start_image.shape[0] + 3
-                    t_end = min(max(s_end, middle_idx - 4), length)
-                    for fi in range(s_end, t_end):
-                        mask_high_noise[:, :, fi] = mask_high_noise[:, :, fi] * g1
-
-            if middle_image is not None and end_image is not None and enable_middle_frame:
-                g2 = create_spatial_gradient(middle_image[0:1].to(device), end_image[-1:].to(device), mask_h2, mask_w2, boost_factor)
-                if g2 is not None:
-                    for fi in range(middle_idx + 5, length - end_image.shape[0]):
-                        mask_high_noise[:, :, fi] = mask_high_noise[:, :, fi] * g2
-
-            if start_image is not None and end_image is not None and (middle_image is None or not enable_middle_frame):
-                g3 = create_spatial_gradient(start_image[0:1].to(device), end_image[-1:].to(device), mask_h2, mask_w2, boost_factor)
-                if g3 is not None:
-                    for fi in range(start_image.shape[0] + 3, length - end_image.shape[0]):
-                        mask_high_noise[:, :, fi] = mask_high_noise[:, :, fi] * g3
+            ref_indices = []
+            if start_image is not None and enable_start_frame and long_video_mode != "LATENT_CONTINUE":
+                ref_indices.append(0)
+            if middle_image is not None and enable_middle_frame:
+                ref_indices.append(middle_idx // 4)
+            if end_image is not None and enable_end_frame:
+                ref_indices.append(latent_t - 1)
+            if len(ref_indices) >= 2:
+                concat_latent_image = apply_repulsion_boost(concat_latent_image, ref_indices, structural_repulsion_boost)
 
         if latent_continue_mode:
             concat_latent_image_low = concat_latent_image

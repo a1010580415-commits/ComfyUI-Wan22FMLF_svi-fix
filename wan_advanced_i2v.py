@@ -5,7 +5,7 @@ import node_helpers
 import comfy
 import comfy.utils
 import comfy.latent_formats
-from .utils import merge_clip_vision_outputs, create_spatial_gradient
+from .utils import merge_clip_vision_outputs, apply_repulsion_boost
 
 
 class WanAdvancedI2V(io.ComfyNode):
@@ -489,53 +489,15 @@ class WanAdvancedI2V(io.ComfyNode):
             concat_latent_image = vae.encode(image[:, :, :, :3])
         
         if structural_repulsion_boost > 1.001 and length > 4:
-            mask_h, mask_w = mask_high_noise.shape[-2], mask_high_noise.shape[-1]
-            boost_factor = structural_repulsion_boost - 1.0
-
-            if start_image is not None and middle_image is not None and enable_middle_frame:
-                start_img = start_image[0:1].to(device)
-                mid_img = middle_image[0:1].to(device)
-
-                spatial_gradient_1 = create_spatial_gradient(start_img, mid_img, mask_h, mask_w, boost_factor)
-
-                if spatial_gradient_1 is not None:
-                    start_end = start_image.shape[0] + 3
-                    mid_protect_start = max(start_end, middle_idx - 4)
-                    mid_protect_end = middle_idx + 5
-                    transition_end = min(mid_protect_start, length)
-
-                    for frame_idx in range(start_end, transition_end):
-                        current_mask = mask_high_noise[:, :, frame_idx, :, :]
-                        mask_high_noise[:, :, frame_idx, :, :] = current_mask * spatial_gradient_1
-
-            if middle_image is not None and end_image is not None and enable_middle_frame:
-                mid_img = middle_image[0:1].to(device)
-                end_img = end_image[-1:].to(device)
-
-                spatial_gradient_2 = create_spatial_gradient(mid_img, end_img, mask_h, mask_w, boost_factor)
-
-                if spatial_gradient_2 is not None:
-                    mid_protect_end = middle_idx + 5
-                    transition_start = mid_protect_end
-                    end_start = length - end_image.shape[0]
-
-                    for frame_idx in range(transition_start, end_start):
-                        current_mask = mask_high_noise[:, :, frame_idx, :, :]
-                        mask_high_noise[:, :, frame_idx, :, :] = current_mask * spatial_gradient_2
-
-            if start_image is not None and end_image is not None and (middle_image is None or not enable_middle_frame):
-                start_img = start_image[0:1].to(device)
-                end_img = end_image[-1:].to(device)
-
-                spatial_gradient = create_spatial_gradient(start_img, end_img, mask_h, mask_w, boost_factor)
-
-                if spatial_gradient is not None:
-                    start_end = start_image.shape[0] + 3
-                    end_start = length - end_image.shape[0]
-
-                    for frame_idx in range(start_end, end_start):
-                        current_mask = mask_high_noise[:, :, frame_idx, :, :]
-                        mask_high_noise[:, :, frame_idx, :, :] = current_mask * spatial_gradient
+            ref_indices = []
+            if start_image is not None and enable_start_frame and long_video_mode != "LATENT_CONTINUE":
+                ref_indices.append(0)
+            if middle_image is not None and enable_middle_frame:
+                ref_indices.append(middle_idx // 4)
+            if end_image is not None and enable_end_frame:
+                ref_indices.append(latent_t - 1)
+            if len(ref_indices) >= 2:
+                concat_latent_image = apply_repulsion_boost(concat_latent_image, ref_indices, structural_repulsion_boost)
         
         if latent_continue_mode:
             # LATENT_CONTINUE mode: concat image and concat latent should be the same

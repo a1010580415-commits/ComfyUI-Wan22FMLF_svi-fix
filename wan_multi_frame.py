@@ -5,7 +5,7 @@ import json
 import node_helpers
 import comfy
 import comfy.utils
-from .utils import merge_clip_vision_outputs, create_spatial_gradient
+from .utils import merge_clip_vision_outputs, apply_repulsion_boost
 
 
 class WanMultiFrameRefToVideo(io.ComfyNode):
@@ -147,29 +147,8 @@ class WanMultiFrameRefToVideo(io.ComfyNode):
                 concat_latent_image_high = vae.encode(image[:, :, :, :3])
 
         if structural_repulsion_boost > 1.001 and length > 4 and n_imgs >= 2:
-            mask_h, mask_w = mask_high_noise.shape[-2], mask_high_noise.shape[-1]
-            boost_factor = structural_repulsion_boost - 1.0
-
-            for i in range(n_imgs - 1):
-                pos1 = int(aligned_positions[i])
-                pos2 = int(aligned_positions[i + 1])
-
-                if pos2 > pos1 + 4:
-                    start_end = pos1 + 4
-                    end_start = pos2
-                    protect_start = pos2 - 4
-
-                    img1 = imgs[i:i+1].to(device)
-                    img2 = imgs[i+1:i+2].to(device)
-
-                    spatial_gradient = create_spatial_gradient(img1, img2, mask_h, mask_w, boost_factor)
-
-                    if spatial_gradient is not None:
-                        transition_end = min(protect_start, end_start)
-
-                        for frame_idx in range(start_end, transition_end):
-                            current_mask = mask_high_noise[:, :, frame_idx, :, :]
-                            mask_high_noise[:, :, frame_idx, :, :] = current_mask * spatial_gradient
+            ref_indices = sorted(set(int(p) // 4 for p in aligned_positions))
+            concat_latent_image_high = apply_repulsion_boost(concat_latent_image_high, ref_indices, structural_repulsion_boost)
 
         if mode == "SINGLE_PERSON":
             mask_low_noise = mask_base.clone()

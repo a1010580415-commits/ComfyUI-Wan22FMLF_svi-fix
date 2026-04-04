@@ -17,25 +17,43 @@ def merge_clip_vision_outputs(*outputs):
     return result
 
 
-def create_spatial_gradient(img1, img2, mask_h, mask_w, boost_factor):
-    """Compute a spatial gradient mask from the L1 motion diff between two images.
+def apply_repulsion_boost(concat_latent, ref_latent_indices, boost):
+    """Enhance motion between reference frames in concat_latent_image.
 
-    Returns a (mask_h, mask_w) tensor, or None if either input is None.
+    Implements PainterFLF2V's "Anti-Ghost Vector" technique:
+    for each transition frame between two reference latents, amplifies the
+    high-frequency difference from a linear interpolation between the references.
+    This pushes the model away from flat/ghosted linear morph paths.
+
+    concat_latent: [1, C, T, H, W]
+    ref_latent_indices: sorted list of latent frame indices with real content
+    boost: float > 1.0  (1.0 = no effect)
     """
-    if img1 is None or img2 is None:
-        return None
+    if boost <= 1.001 or len(ref_latent_indices) < 2:
+        return concat_latent
 
-    motion_diff = torch.abs(img2[0] - img1[0]).mean(dim=-1, keepdim=False)
-    motion_diff_4d = motion_diff.unsqueeze(0).unsqueeze(0)
-    motion_diff_scaled = F.interpolate(
-        motion_diff_4d,
-        size=(mask_h, mask_w),
-        mode='bilinear',
-        align_corners=False
-    )
+    scale = (boost - 1.0) * 4.0
+    result = concat_latent.clone()
 
-    motion_normalized = (motion_diff_scaled - motion_diff_scaled.min()) / (motion_diff_scaled.max() - motion_diff_scaled.min() + 1e-8)
+    for i in range(len(ref_latent_indices) - 1):
+        t1 = ref_latent_indices[i]
+        t2 = ref_latent_indices[i + 1]
+        if t2 - t1 < 2:
+            continue
 
-    spatial_gradient = 1.0 - motion_normalized * boost_factor * 2.5
-    spatial_gradient = torch.clamp(spatial_gradient, 0.02, 1.0)
-    return spatial_gradient[0, 0]
+        ref1 = concat_latent[:, :, t1:t1 + 1]  # [1, C, 1, H, W]
+        ref2 = concat_latent[:, :, t2:t2 + 1]
+
+        for t in range(t1 + 1, t2):
+            alpha = (t - t1) / (t2 - t1)
+            linear = (1.0 - alpha) * ref1 + alpha * ref2
+            diff = concat_latent[:, :, t:t + 1] - linear  # [1, C, 1, H, W]
+
+            # Spatial high-pass: remove low-frequency color drift, keep structure
+            diff_2d = diff.squeeze(2)  # [1, C, H, W]
+            low_freq = F.avg_pool2d(diff_2d, kernel_size=3, stride=1, padding=1)
+            high_freq = (diff_2d - low_freq).unsqueeze(2)  # [1, C, 1, H, W]
+
+            result[:, :, t:t + 1] = concat_latent[:, :, t:t + 1] + high_freq * scale
+
+    return result

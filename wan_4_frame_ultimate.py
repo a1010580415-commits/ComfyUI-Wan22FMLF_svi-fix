@@ -5,7 +5,7 @@ import node_helpers
 import comfy
 import comfy.utils
 from typing import Tuple
-from .utils import merge_clip_vision_outputs, create_spatial_gradient
+from .utils import merge_clip_vision_outputs, apply_repulsion_boost
 
 
 class WanFourFrameReferenceUltimate(io.ComfyNode):
@@ -175,35 +175,16 @@ class WanFourFrameReferenceUltimate(io.ComfyNode):
         concat_latent_image_high = vae.encode(image[:, :, :, :3])
         
         if structural_repulsion_boost > 1.001 and length > 4:
-            mask_h, mask_w = mask_high_noise.shape[-2], mask_high_noise.shape[-1]
-            boost_factor = structural_repulsion_boost - 1.0
-
+            latent_t = concat_latent_image_high.shape[2]
             frames = [
                 (frame_1_image, frame_1_idx) if frame_1_image is not None else (None, None),
                 (frame_2_image, frame_2_idx) if frame_2_image is not None and enable_frame_2 == "enable" else (None, None),
                 (frame_3_image, frame_3_idx) if frame_3_image is not None and enable_frame_3 == "enable" else (None, None),
                 (frame_4_image, frame_4_idx) if frame_4_image is not None else (None, None),
             ]
-
-            valid_frames = [(img, idx) for img, idx in frames if img is not None and idx is not None]
-
-            for i in range(len(valid_frames) - 1):
-                img1, pos1 = valid_frames[i]
-                img2, pos2 = valid_frames[i + 1]
-
-                if pos2 > pos1 + 4:
-                    start_end = pos1 + 4
-                    end_start = pos2
-                    protect_start = pos2 - 4
-
-                    spatial_gradient = create_spatial_gradient(img1[0:1].to(device), img2[0:1].to(device), mask_h, mask_w, boost_factor)
-
-                    if spatial_gradient is not None:
-                        transition_end = min(protect_start, end_start)
-
-                        for frame_idx in range(start_end, transition_end):
-                            current_mask = mask_high_noise[:, :, frame_idx, :, :]
-                            mask_high_noise[:, :, frame_idx, :, :] = current_mask * spatial_gradient
+            ref_indices = sorted(set(idx // 4 for _, idx in frames if idx is not None))
+            if len(ref_indices) >= 2:
+                concat_latent_image_high = apply_repulsion_boost(concat_latent_image_high, ref_indices, structural_repulsion_boost)
         
         if mode == "SINGLE_PERSON":
             mask_low_noise = mask_base.clone()
