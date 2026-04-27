@@ -8,6 +8,8 @@ https://github.com/user-attachments/assets/2f4a5b17-610f-4c5c-9e3f-e5fd5083e762
 
 两段161帧+一段81帧，每段变化都由中间帧和提示词控制，最后再统一进行对口型
 
+内存充足想跑多长都可以，不过这里只演示一次性跑出来的三组，也可以自己拼接
+
 `合唱不支持对口型所以画面炸了..别和我一样搞这种人数变化大的`
 
 ###### 此示例工作流融合了svipro boost视频延长+fmlf自由帧控制+vbvr物理+infinitalk对口型（painter av2v），满足wan2.2高度定制且一次直出长视频的需求 ，文件在example workflow中
