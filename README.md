@@ -4,6 +4,8 @@
 
 https://github.com/user-attachments/assets/dc1cf2a4-3c6a-4210-a247-e53c2423f776
 
+https://github.com/user-attachments/assets/2f4a5b17-610f-4c5c-9e3f-e5fd5083e762
+
 两段161帧+一段81帧，每段变化都由中间帧和提示词控制，最后再统一进行对口型
 
 `合唱不支持对口型所以画面炸了..别和我一样搞这种人数变化大的`
